@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::mem;
 use std::ops::Bound;
-use std::os::macos::raw::stat;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
