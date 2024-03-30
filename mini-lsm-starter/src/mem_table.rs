@@ -83,7 +83,12 @@ impl MemTable {
     /// In week 1, day 1, simply put the key-value pair into the skipmap.
     /// In week 2, day 6, also flush the data to WAL.
     pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        self.map.insert(Bytes::copy_from_slice(_key), Bytes::copy_from_slice(_value));
+        let size = _key.len() + _value.len();
+        self.approximate_size
+            .fetch_add(size, std::sync::atomic::Ordering::Relaxed);
+
+        self.map
+            .insert(Bytes::copy_from_slice(_key), Bytes::copy_from_slice(_value));
         Ok(())
     }
 
@@ -120,7 +125,7 @@ impl MemTable {
 }
 
 type SkipMapRangeIter<'a> =
-crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
+    crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
 
 /// An iterator over a range of `SkipMap`. This is a self-referential structure and please refer to week 1, day 2
 /// chapter for more information.
