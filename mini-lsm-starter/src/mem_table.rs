@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use anyhow::Result;
-use bytes::{Bytes};
+use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
@@ -154,14 +154,14 @@ pub struct MemTableIterator {
 impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
-    fn value(&self) -> &[u8] {
-        let (_, value) = self.borrow_item();
-        &value[..]
-    }
-
     fn key(&self) -> KeySlice {
         let (key, _) = self.borrow_item();
         KeySlice::from_slice(&key[..])
+    }
+
+    fn value(&self) -> &[u8] {
+        let (_, value) = self.borrow_item();
+        &value[..]
     }
 
     fn is_valid(&self) -> bool {

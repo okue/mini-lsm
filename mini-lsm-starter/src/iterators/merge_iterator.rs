@@ -1,7 +1,5 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::cmp::{self};
+use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 
 use anyhow::Result;
@@ -47,7 +45,17 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap = BinaryHeap::new();
+        for (index, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(index, iter));
+            }
+        }
+        let min = heap.pop();
+        MergeIterator {
+            iters: heap,
+            current: min,
+        }
     }
 }
 
@@ -57,18 +65,58 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        let iter = self.current.as_ref().unwrap().1.as_ref();
+        iter.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        let iter = self.current.as_ref().unwrap().1.as_ref();
+        iter.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        if let Some(ref iter) = self.current {
+            iter.1.is_valid()
+        } else {
+            false
+        }
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let current = self.current.as_mut().unwrap();
+        while let Some(mut min_in_heap) = self.iters.peek_mut() {
+            if min_in_heap.1.key() <= current.1.key() {
+                // Case 1: an error occurred when calling `next`.
+                if let e @ Err(_) = min_in_heap.1.next() {
+                    PeekMut::pop(min_in_heap);
+                    return e;
+                }
+                // Case 2: iter is no longer valid.
+                if !min_in_heap.1.is_valid() {
+                    PeekMut::pop(min_in_heap);
+                }
+            } else {
+                break;
+            }
+        }
+
+        current.1.next()?;
+        if !current.1.is_valid() {
+            if let Some(iter) = self.iters.pop() {
+                *current = iter;
+            }
+            return Ok(());
+        }
+        if let Some(mut min_in_heap) = self.iters.peek_mut() {
+            if *current < *min_in_heap {
+                std::mem::swap(&mut *min_in_heap, current);
+            }
+        }
+        Ok(())
     }
+}
+
+mod test {
+    #[test]
+    fn test() {}
 }

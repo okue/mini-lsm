@@ -24,15 +24,15 @@ impl LsmIterator {
 impl StorageIterator for LsmIterator {
     type KeyType<'a> = &'a [u8];
 
-    fn is_valid(&self) -> bool {
-        unimplemented!()
-    }
-
     fn key(&self) -> &[u8] {
         unimplemented!()
     }
 
     fn value(&self) -> &[u8] {
+        unimplemented!()
+    }
+
+    fn is_valid(&self) -> bool {
         unimplemented!()
     }
 
