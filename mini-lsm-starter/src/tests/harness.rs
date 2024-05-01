@@ -45,6 +45,18 @@ impl MockIterator {
 impl StorageIterator for MockIterator {
     type KeyType<'a> = KeySlice<'a>;
 
+    fn next(&mut self) -> Result<()> {
+        if self.index < self.data.len() {
+            self.index += 1;
+        }
+        if let Some(error_when) = self.error_when {
+            if self.index == error_when {
+                bail!("fake error!");
+            }
+        }
+        Ok(())
+    }
+
     fn key(&self) -> KeySlice {
         if let Some(error_when) = self.error_when {
             if self.index >= error_when {
@@ -70,18 +82,6 @@ impl StorageIterator for MockIterator {
             }
         }
         self.index < self.data.len()
-    }
-
-    fn next(&mut self) -> Result<()> {
-        if self.index < self.data.len() {
-            self.index += 1;
-        }
-        if let Some(error_when) = self.error_when {
-            if self.index == error_when {
-                bail!("fake error!");
-            }
-        }
-        Ok(())
     }
 }
 
@@ -180,7 +180,6 @@ pub fn expect_iter_error(mut iter: impl StorageIterator) {
     }
 }
 
-#[allow(dead_code)]
 pub fn generate_sst(
     id: usize,
     path: impl AsRef<Path>,
@@ -211,7 +210,6 @@ pub fn generate_sst_with_ts(
     builder.build(id, block_cache, path.as_ref()).unwrap()
 }
 
-#[allow(dead_code)]
 pub fn sync(storage: &LsmStorageInner) {
     storage
         .force_freeze_memtable(&storage.state_lock.lock())
@@ -219,7 +217,6 @@ pub fn sync(storage: &LsmStorageInner) {
     storage.force_flush_next_imm_memtable().unwrap();
 }
 
-#[allow(dead_code)]
 pub fn compaction_bench(storage: Arc<MiniLsm>) {
     let mut key_map = BTreeMap::<usize, usize>::new();
     let gen_key = |i| format!("{:010}", i); // 10B
@@ -282,7 +279,6 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
     println!("This test case does not guarantee your compaction algorithm produces a LSM state as expected. It only does minimal checks on the size of the levels. Please use the compaction simulator to check if the compaction is correctly going on.");
 }
 
-#[allow(dead_code)]
 pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
     let state = storage.inner.state.read().clone();
     let compaction_options = storage.inner.options.compaction_options.clone();
@@ -412,7 +408,6 @@ pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
     }
 }
 
-#[allow(dead_code)]
 pub fn dump_files_in_dir(path: impl AsRef<Path>) {
     println!("--- DIR DUMP ---");
     for f in path.as_ref().read_dir().unwrap() {
@@ -425,7 +420,6 @@ pub fn dump_files_in_dir(path: impl AsRef<Path>) {
     }
 }
 
-#[allow(dead_code)]
 pub fn construct_merge_iterator_over_storage(
     state: &LsmStorageState,
 ) -> MergeIterator<SsTableIterator> {
