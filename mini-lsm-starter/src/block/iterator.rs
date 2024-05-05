@@ -1,7 +1,8 @@
-use crate::block::builder::SIZEOF_U16;
-use bytes::Buf;
 use std::sync::Arc;
 
+use bytes::Buf;
+
+use crate::block::builder::SIZEOF_U16;
 use crate::key::{KeySlice, KeyVec};
 
 use super::Block;

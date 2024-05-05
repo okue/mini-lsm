@@ -8,6 +8,7 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 
+use crate::key::Key;
 use crate::{
     compact::{
         CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions,
@@ -87,7 +88,29 @@ impl StorageIterator for MockIterator {
     }
 }
 
-pub fn as_bytes(x: &[u8]) -> Bytes {
+pub trait AsBytes {
+    fn as_bytes(&self) -> Bytes;
+}
+
+impl AsBytes for Vec<u8> {
+    fn as_bytes(&self) -> Bytes {
+        as_bytes(self)
+    }
+}
+
+impl AsBytes for &[u8] {
+    fn as_bytes(&self) -> Bytes {
+        as_bytes(self)
+    }
+}
+
+impl<T: AsRef<[u8]>> AsBytes for Key<T> {
+    fn as_bytes(&self) -> Bytes {
+        as_bytes(self.inner().as_ref())
+    }
+}
+
+fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
@@ -102,14 +125,14 @@ where
             iter.key().for_testing_key_ref(),
             "expected key: {:?}, actual key: {:?}",
             k,
-            as_bytes(iter.key().for_testing_key_ref()),
+            iter.key().as_bytes(),
         );
         assert_eq!(
             v,
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            as_bytes(iter.value()),
+            iter.value().as_bytes()
         );
         iter.next().unwrap();
     }
@@ -132,7 +155,7 @@ where
             "expected key: {:?}@{}, actual key: {:?}@{}",
             k,
             ts,
-            as_bytes(iter.key().for_testing_key_ref()),
+            iter.key().as_bytes(),
             iter.key().for_testing_ts(),
         );
         assert_eq!(
@@ -140,7 +163,7 @@ where
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            as_bytes(iter.value()),
+            iter.value().as_bytes(),
         );
         iter.next().unwrap();
     }
@@ -158,14 +181,14 @@ where
             iter.key(),
             "expected key: {:?}, actual key: {:?}",
             k,
-            as_bytes(iter.key()),
+            iter.key().as_bytes(),
         );
         assert_eq!(
             v,
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            as_bytes(iter.value()),
+            iter.value().as_bytes(),
         );
         iter.next().unwrap();
     }

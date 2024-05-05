@@ -11,6 +11,10 @@ pub type KeyVec = Key<Vec<u8>>;
 pub type KeyBytes = Key<Bytes>;
 
 impl<T: AsRef<[u8]>> Key<T> {
+    pub fn inner(&self) -> &T {
+        &self.0
+    }
+
     pub fn into_inner(self) -> T {
         self.0
     }

@@ -1,5 +1,3 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -120,9 +118,11 @@ pub struct SsTable {
     /// The offset that indicates the start point of meta blocks in `file`.
     pub(crate) block_meta_offset: usize,
     id: usize,
+    #[allow(dead_code)]
     block_cache: Option<Arc<BlockCache>>,
     first_key: KeyBytes,
     last_key: KeyBytes,
+    #[allow(dead_code)]
     pub(crate) bloom: Option<Bloom>,
     /// The maximum timestamp stored in this SST, implemented in week 3.
     max_ts: u64,
@@ -181,19 +181,29 @@ impl SsTable {
 
     /// Read a block from the disk.
     pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+        let block_offset = self.block_meta[block_idx].offset as u64;
+        let end_offset = self
+            .block_meta
+            .get(block_idx + 1)
+            .map_or(self.block_meta_offset, |x| x.offset) as u64;
+        Ok(Arc::new(Block::decode(
+            &self.file.read(block_offset, end_offset - block_offset)?[..],
+        )))
     }
 
     /// Read a block from disk, with block cache. (Day 4)
-    pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
+    pub fn read_block_cached(&self, _block_idx: usize) -> Result<Arc<Block>> {
         unimplemented!()
     }
 
     /// Find the block that may contain `key`.
-    /// Note: You may want to make use of the `first_key` stored in `BlockMeta`.
+    /// Note:
     /// You may also assume the key-value pairs stored in each consecutive block are sorted.
     pub fn find_block_idx(&self, key: KeySlice) -> usize {
-        unimplemented!()
+        let key = key.to_key_vec().into_key_bytes();
+        self.block_meta
+            .partition_point(|b| b.last_key < key)
+            .min(self.num_of_blocks() - 1)
     }
 
     /// Get number of data elocks.
@@ -219,5 +229,33 @@ impl SsTable {
 
     pub fn max_ts(&self) -> u64 {
         self.max_ts
+    }
+}
+
+mod tests {
+    #[test]
+    fn check_partition_point() {
+        let l = [1, 2, 4, 6];
+        // 0
+        assert_eq!(l.partition_point(|x| x <= &0), 0);
+        assert_eq!(l.partition_point(|x| x < &0), 0);
+        // 1
+        assert_eq!(l.partition_point(|x| x <= &1), 1);
+        assert_eq!(l.partition_point(|x| x < &1), 0);
+        // 2
+        assert_eq!(l.partition_point(|x| x <= &2), 2);
+        assert_eq!(l.partition_point(|x| x < &2), 1);
+        // 3
+        assert_eq!(l.partition_point(|x| x <= &3), 2);
+        assert_eq!(l.partition_point(|x| x < &3), 2);
+        // 4
+        assert_eq!(l.partition_point(|x| x <= &4), 3);
+        assert_eq!(l.partition_point(|x| x < &4), 2);
+        // 5
+        assert_eq!(l.partition_point(|x| x <= &5), 3);
+        assert_eq!(l.partition_point(|x| x < &5), 3);
+        // 6
+        assert_eq!(l.partition_point(|x| x <= &6), 4);
+        assert_eq!(l.partition_point(|x| x < &6), 3);
     }
 }
