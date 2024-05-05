@@ -32,6 +32,12 @@ impl BlockBuilder {
     }
 
     /// Adds a key-value pair to the block. Returns false when the block is full.
+    ///
+    /// -----------------------------------------------------------------------
+    /// |                           Entry #1                            | ... |
+    /// -----------------------------------------------------------------------
+    /// | key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
+    /// -----------------------------------------------------------------------
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         if !self.is_empty()
@@ -47,10 +53,14 @@ impl BlockBuilder {
         self.data.put_slice(key.raw_ref());
         self.data.put_u16(value.len() as u16);
         self.data.put_slice(value);
+
+        if self.first_key.is_empty() {
+            self.first_key = key.to_key_vec();
+        }
         true
     }
 
-    fn estimated_size(&self) -> usize {
+    pub fn estimated_size(&self) -> usize {
         SIZEOF_U16 // number of key-value pairs in the block
             +  self.offsets.len() * SIZEOF_U16 // offsets
             + self.data.len() // key-value pairs

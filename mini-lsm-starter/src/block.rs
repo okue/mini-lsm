@@ -25,6 +25,15 @@ impl Block {
 
     /// Encode the internal data to the data layout illustrated in the tutorial
     /// Note: You may want to recheck if any of the expected field is missing from your output
+    ///
+    /// ----------------------------------------------------------------------------------------------------
+    /// |             Data Section             |              Offset Section             |      Extra      |
+    /// ----------------------------------------------------------------------------------------------------
+    /// | Entry #1 | Entry #2 | ... | Entry #N | Offset #1 | Offset #2 | ... | Offset #N | num_of_elements |
+    /// ----------------------------------------------------------------------------------------------------
+    ///
+    ///
+    /// See [BlockBuilder::add].
     pub fn encode(&self) -> Bytes {
         let mut buffer = self.data.clone();
         for offset in &self.offsets {

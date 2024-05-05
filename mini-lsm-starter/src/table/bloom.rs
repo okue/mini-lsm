@@ -1,4 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
+#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
+#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
