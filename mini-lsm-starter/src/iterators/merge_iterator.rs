@@ -115,8 +115,3 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         Ok(())
     }
 }
-
-mod test {
-    #[test]
-    fn test() {}
-}
