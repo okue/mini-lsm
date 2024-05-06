@@ -1,5 +1,5 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)]
+#![allow(dead_code)]
 use std::{
     collections::BTreeMap, ops::Bound, os::unix::fs::MetadataExt, path::Path, sync::Arc,
     time::Duration,
@@ -125,14 +125,14 @@ where
             iter.key().for_testing_key_ref(),
             "expected key: {:?}, actual key: {:?}",
             k,
-            iter.key().as_bytes(),
+            as_bytes(iter.key().for_testing_key_ref()),
         );
         assert_eq!(
             v,
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            iter.value().as_bytes()
+            as_bytes(iter.value()),
         );
         iter.next().unwrap();
     }
@@ -155,7 +155,7 @@ where
             "expected key: {:?}@{}, actual key: {:?}@{}",
             k,
             ts,
-            iter.key().as_bytes(),
+            as_bytes(iter.key().for_testing_key_ref()),
             iter.key().for_testing_ts(),
         );
         assert_eq!(
@@ -163,7 +163,7 @@ where
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            iter.value().as_bytes(),
+            as_bytes(iter.value()),
         );
         iter.next().unwrap();
     }
@@ -181,14 +181,14 @@ where
             iter.key(),
             "expected key: {:?}, actual key: {:?}",
             k,
-            iter.key().as_bytes(),
+            as_bytes(iter.key()),
         );
         assert_eq!(
             v,
             iter.value(),
             "expected value: {:?}, actual value: {:?}",
             v,
-            iter.value().as_bytes(),
+            as_bytes(iter.value()),
         );
         iter.next().unwrap();
     }
