@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::{Buf, BufMut};
 
 pub use builder::SsTableBuilder;
@@ -192,8 +192,15 @@ impl SsTable {
     }
 
     /// Read a block from disk, with block cache. (Day 4)
-    pub fn read_block_cached(&self, _block_idx: usize) -> Result<Arc<Block>> {
-        unimplemented!()
+    pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
+        if let Some(ref block_cache) = self.block_cache {
+            let blk = block_cache
+                .try_get_with((self.id, block_idx), || self.read_block(block_idx))
+                .map_err(|e| anyhow!("{}", e))?;
+            Ok(blk)
+        } else {
+            self.read_block(block_idx)
+        }
     }
 
     /// Find the block that may contain `key`.
