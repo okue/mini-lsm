@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::tests::harness::AsBytes;
+use crate::tests::harness::as_bytes;
 use crate::{
     block::{Block, BlockBuilder, BlockIterator},
     key::{KeySlice, KeyVec},
@@ -39,20 +39,6 @@ fn test_block_build_large_2() {
         KeySlice::for_testing_from_slice_no_ts(b"11"),
         &b"1".repeat(100)
     ));
-}
-
-#[test]
-fn test_block_build() {
-    let block = generate_block();
-    let mut iter = BlockIterator::create_and_seek_to_first(Arc::new(block));
-    while iter.is_valid() {
-        println!(
-            "{:?} = {:?}",
-            iter.key().as_bytes(),
-            iter.value().as_bytes()
-        );
-        iter.next();
-    }
 }
 
 fn key_of(idx: usize) -> KeyVec {
@@ -109,15 +95,15 @@ fn test_block_iterator() {
                 key.for_testing_key_ref(),
                 key_of(i).for_testing_key_ref(),
                 "expected key: {:?}, actual key: {:?}",
-                key_of(i).as_bytes(),
-                key.as_bytes(),
+                as_bytes(key_of(i).for_testing_key_ref()),
+                as_bytes(key.for_testing_key_ref())
             );
             assert_eq!(
                 value,
                 value_of(i),
                 "expected value: {:?}, actual value: {:?}",
-                &value_of(i).as_bytes(),
-                value.as_bytes()
+                as_bytes(&value_of(i)[..]),
+                as_bytes(value)
             );
             iter.next();
         }
@@ -137,15 +123,15 @@ fn test_block_seek_key() {
                 key.for_testing_key_ref(),
                 key_of(i).for_testing_key_ref(),
                 "expected key: {:?}, actual key: {:?}",
-                key_of(i).as_bytes(),
-                key.as_bytes()
+                as_bytes(key_of(i).for_testing_key_ref()),
+                as_bytes(key.for_testing_key_ref())
             );
             assert_eq!(
                 value,
                 value_of(i),
                 "expected value: {:?}, actual value: {:?}",
-                &value_of(i).as_bytes(),
-                value.as_bytes()
+                as_bytes(&value_of(i)),
+                as_bytes(value)
             );
             iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(
                 &format!("key_{:03}", i * 5 + offset).into_bytes(),

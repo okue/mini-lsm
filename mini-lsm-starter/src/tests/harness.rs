@@ -1,4 +1,3 @@
-#![allow(unused_variables)]
 #![allow(dead_code)]
 use std::{
     collections::BTreeMap, ops::Bound, os::unix::fs::MetadataExt, path::Path, sync::Arc,
@@ -8,7 +7,6 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 
-use crate::key::Key;
 use crate::{
     compact::{
         CompactionOptions, LeveledCompactionOptions, SimpleLeveledCompactionOptions,
@@ -88,29 +86,7 @@ impl StorageIterator for MockIterator {
     }
 }
 
-pub trait AsBytes {
-    fn as_bytes(&self) -> Bytes;
-}
-
-impl AsBytes for Vec<u8> {
-    fn as_bytes(&self) -> Bytes {
-        as_bytes(self)
-    }
-}
-
-impl AsBytes for &[u8] {
-    fn as_bytes(&self) -> Bytes {
-        as_bytes(self)
-    }
-}
-
-impl<T: AsRef<[u8]>> AsBytes for Key<T> {
-    fn as_bytes(&self) -> Bytes {
-        as_bytes(self.inner().as_ref())
-    }
-}
-
-fn as_bytes(x: &[u8]) -> Bytes {
+pub fn as_bytes(x: &[u8]) -> Bytes {
     Bytes::copy_from_slice(x)
 }
 
@@ -119,13 +95,6 @@ where
     I: for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
 {
     for (k, v) in expected {
-        println!(
-            "expected key-value: {:?} - {:?}, actual key-value: {:?} - {:?}",
-            k,
-            v,
-            as_bytes(iter.key().for_testing_key_ref()),
-            as_bytes(iter.value()),
-        );
         assert!(iter.is_valid());
         assert_eq!(
             k,

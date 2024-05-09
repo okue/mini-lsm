@@ -5,7 +5,7 @@ use tempfile::{tempdir, TempDir};
 use crate::iterators::StorageIterator;
 use crate::key::{KeySlice, KeyVec};
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
-use crate::tests::harness::AsBytes;
+use crate::tests::harness::as_bytes;
 
 #[test]
 fn test_sst_build_single_key() {
@@ -75,16 +75,6 @@ fn test_sst_decode() {
 }
 
 #[test]
-fn test_storage_iter() {
-    let (_dir, sst) = generate_sst();
-    let sst = Arc::new(sst);
-    let iter = SsTableIterator::create_and_seek_to_first(sst).unwrap();
-
-    println!("{:?}", iter.key().as_bytes());
-    println!("{:?}", iter.value().as_bytes());
-}
-
-#[test]
 fn test_sst_iterator() {
     let (_dir, sst) = generate_sst();
     let sst = Arc::new(sst);
@@ -100,15 +90,15 @@ fn test_sst_iterator() {
                 key.for_testing_key_ref(),
                 key_of(i).for_testing_key_ref(),
                 "expected key: {:?}, actual key: {:?}",
-                key_of(i).as_bytes(),
-                key.as_bytes()
+                as_bytes(key_of(i).for_testing_key_ref()),
+                as_bytes(key.for_testing_key_ref())
             );
             assert_eq!(
                 value,
                 value_of(i),
                 "expected value: {:?}, actual value: {:?}",
-                &value_of(i).as_bytes(),
-                value.as_bytes()
+                as_bytes(&value_of(i)[..]),
+                as_bytes(value)
             );
             iter.next().unwrap();
         }
@@ -129,25 +119,19 @@ fn test_sst_seek_key() {
         for i in 0..num_of_keys() {
             let key = iter.key();
             let value = iter.value();
-            println!(
-                "i={} - key:value = {:?}:{:?}",
-                i,
-                key.as_bytes(),
-                value.as_bytes()
-            );
             assert_eq!(
                 key.for_testing_key_ref(),
                 key_of(i).for_testing_key_ref(),
                 "expected key: {:?}, actual key: {:?}",
-                key_of(i).for_testing_key_ref().as_bytes(),
-                key.as_bytes()
+                as_bytes(key_of(i).for_testing_key_ref()),
+                as_bytes(key.for_testing_key_ref())
             );
             assert_eq!(
                 value,
                 value_of(i),
                 "expected value: {:?}, actual value: {:?}",
-                &value_of(i).as_bytes(),
-                value.as_bytes()
+                as_bytes(&value_of(i)[..]),
+                as_bytes(value)
             );
             iter.seek_to_key(KeySlice::for_testing_from_slice_no_ts(
                 &format!("key_{:03}", i * 5 + offset).into_bytes(),
