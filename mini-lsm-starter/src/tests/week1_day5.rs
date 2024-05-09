@@ -202,6 +202,18 @@ fn test_task2_storage_scan() {
             .unwrap(),
         vec![(Bytes::from("00"), Bytes::from("2333"))],
     );
+    check_lsm_iter_result_by_key(
+        &mut storage
+            .scan(Bound::Excluded(b"5"), Bound::Included(b"10"))
+            .unwrap(),
+        vec![],
+    );
+    check_lsm_iter_result_by_key(
+        &mut storage
+            .scan(Bound::Included(b"0"), Bound::Included(b"0"))
+            .unwrap(),
+        vec![(Bytes::from("0"), Bytes::from("2333333"))],
+    );
 }
 
 #[test]

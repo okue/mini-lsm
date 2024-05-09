@@ -27,7 +27,7 @@ impl<
             a.key() <= b.key()
         }
     }
-    
+
     fn skip_b(a: &A, b: &mut B) -> Result<()> {
         if a.is_valid() && b.is_valid() && a.key() == b.key() {
             b.next()?;

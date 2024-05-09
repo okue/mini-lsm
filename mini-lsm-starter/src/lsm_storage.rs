@@ -1,5 +1,3 @@
-#![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
-
 use std::collections::HashMap;
 use std::mem;
 use std::ops::Bound;
@@ -17,11 +15,14 @@ use crate::compact::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
 use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::iterators::StorageIterator;
+use crate::key::KeySlice;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
-use crate::mem_table::{MemTable, MemTableIterator};
+use crate::mem_table::{map_bound, MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
-use crate::table::SsTable;
+use crate::table::{SsTable, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -124,25 +125,32 @@ pub enum CompactionFilter {
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
     pub(crate) state_lock: Mutex<()>,
+    #[allow(dead_code)]
     path: PathBuf,
+    #[allow(dead_code)]
     pub(crate) block_cache: Arc<BlockCache>,
     next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,
+    #[allow(dead_code)]
     pub(crate) compaction_controller: CompactionController,
+    #[allow(dead_code)]
     pub(crate) manifest: Option<Manifest>,
+    #[allow(dead_code)]
     pub(crate) mvcc: Option<LsmMvccInner>,
     pub(crate) compaction_filters: Arc<Mutex<Vec<CompactionFilter>>>,
 }
 
-/// A thin wrapper for `LsmStorageInner` and the user interface for MiniLSM.
+/// A thin wrapper for [LsmStorageInner] and the user interface for MiniLSM.
 pub struct MiniLsm {
     pub(crate) inner: Arc<LsmStorageInner>,
     /// Notifies the L0 flush thread to stop working. (In week 1 day 6)
     flush_notifier: crossbeam_channel::Sender<()>,
+    #[allow(dead_code)]
     /// The handle for the flush thread. (In week 1 day 6)
     flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Notifies the compaction thread to stop working. (In week 2)
     compaction_notifier: crossbeam_channel::Sender<()>,
+    #[allow(dead_code)]
     /// The handle for the compaction thread. (In week 2)
     compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
@@ -280,18 +288,22 @@ impl LsmStorageInner {
     }
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
-    pub fn get(&self, _key: &[u8]) -> Result<Option<Bytes>> {
-        let state = self.state.read();
-        if let Some(v) = state.memtable.get(_key) {
+    pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        let state = self.state.read().clone();
+        if let Some(v) = state.memtable.get(key) {
             return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
         }
         for memtable in &state.imm_memtables {
-            if let Some(v) = memtable.get(_key) {
+            if let Some(v) = memtable.get(key) {
                 return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
             }
         }
-
-        Ok(None)
+        let iter = Self::create_l0_sstable_iter(state, Bound::Included(key))?;
+        if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
+            Ok(Some(Bytes::copy_from_slice(iter.value())))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -323,22 +335,27 @@ impl LsmStorageInner {
         self.put(_key, &[])
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
         path.as_ref().join(format!("{:05}.sst", id))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf {
         Self::path_of_sst_static(&self.path, id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path_of_wal_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
         path.as_ref().join(format!("{:05}.wal", id))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path_of_wal(&self, id: usize) -> PathBuf {
         Self::path_of_wal_static(&self.path, id)
     }
 
+    #[allow(dead_code)]
     pub(super) fn sync_dir(&self) -> Result<()> {
         unimplemented!()
     }
@@ -369,23 +386,66 @@ impl LsmStorageInner {
         Ok(())
     }
 
+    fn create_memtable_iter(
+        state: Arc<LsmStorageState>,
+        lower: Bound<&[u8]>,
+        upper: Bound<&[u8]>,
+    ) -> MergeIterator<MemTableIterator> {
+        let mut iters: Vec<Box<MemTableIterator>> = Vec::new();
+        iters.push(Box::new(state.memtable.scan(lower, upper)));
+        for mem_table in &state.imm_memtables {
+            iters.push(Box::new(mem_table.scan(lower, upper)));
+        }
+        MergeIterator::create(iters)
+    }
+
+    fn create_l0_sstable_iter(
+        state: Arc<LsmStorageState>,
+        lower: Bound<&[u8]>,
+    ) -> Result<MergeIterator<SsTableIterator>> {
+        let mut iters: Vec<Box<SsTableIterator>> = Vec::new();
+        for idx in &state.l0_sstables {
+            if let Some(sstable) = state.sstables.get(idx).cloned() {
+                let sstable_iter = match lower {
+                    Bound::Included(key) => {
+                        SsTableIterator::create_and_seek_to_key(sstable, KeySlice::from_slice(key))?
+                    }
+                    Bound::Excluded(key) => {
+                        let mut iter = SsTableIterator::create_and_seek_to_key(
+                            sstable,
+                            KeySlice::from_slice(key),
+                        )?;
+                        if iter.is_valid() && iter.key().into_inner() == key {
+                            iter.next()?;
+                        }
+                        iter
+                    }
+                    Bound::Unbounded => SsTableIterator::create_and_seek_to_first(sstable)?,
+                };
+                iters.push(Box::new(sstable_iter))
+            }
+        }
+        Ok(MergeIterator::create(iters))
+    }
+
     /// Create an iterator over a range of keys.
     pub fn scan(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        let mut iterators: Vec<Box<MemTableIterator>> = Vec::new();
-
-        let state = self.state.read();
-        iterators.push(Box::new(state.memtable.scan(lower, upper)));
-        for mem_table in &state.imm_memtables {
-            iterators.push(Box::new(mem_table.scan(lower, upper)));
-        }
-        drop(state);
-
+        let state = {
+            let guard = self.state.read();
+            guard.clone()
+        };
+        let memtable_iter = Self::create_memtable_iter(state.clone(), lower, upper);
+        let sstable_iter = Self::create_l0_sstable_iter(state, lower)?;
         Ok(FusedIterator::new(
-            LsmIterator::new(MergeIterator::create(iterators)).unwrap(),
+            LsmIterator::new(
+                TwoMergeIterator::create(memtable_iter, sstable_iter)?,
+                map_bound(upper),
+            )
+            .unwrap(),
         ))
     }
 }

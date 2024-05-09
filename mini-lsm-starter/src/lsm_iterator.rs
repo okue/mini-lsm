@@ -1,21 +1,32 @@
 use anyhow::{bail, Result};
+use bytes::Bytes;
+use std::collections::Bound;
 
+use crate::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::table::SsTableIterator;
 use crate::{
     iterators::{merge_iterator::MergeIterator, StorageIterator},
     mem_table::MemTableIterator,
 };
 
 /// Represents the internal type for an LSM iterator. This type will be changed across the tutorial for multiple times.
-type LsmIteratorInner = MergeIterator<MemTableIterator>;
+type LsmIteratorInner =
+    TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>;
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,
+    end_bound: Bound<Bytes>,
+    is_valid: bool,
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner) -> Result<Self> {
-        let mut iter = Self { inner: iter };
-        if iter.value().is_empty() {
+    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>) -> Result<Self> {
+        let mut iter = Self {
+            is_valid: iter.is_valid(),
+            inner: iter,
+            end_bound,
+        };
+        if iter.is_valid() && iter.value().is_empty() {
             iter.next()?;
         }
         Ok(iter)
@@ -40,7 +51,7 @@ impl StorageIterator for LsmIterator {
     }
 
     fn is_valid(&self) -> bool {
-        self.inner.is_valid()
+        self.is_valid && self.inner.is_valid()
     }
 
     fn next(&mut self) -> Result<()> {
@@ -50,10 +61,18 @@ impl StorageIterator for LsmIterator {
 
         loop {
             if let e @ Err(_) = self.inner.next() {
+                self.is_valid = false;
                 return e;
             }
 
+            match &self.end_bound {
+                Bound::Included(end_bound) => self.is_valid = self.key() <= end_bound.as_ref(),
+                Bound::Excluded(end_bound) => self.is_valid = self.key() < end_bound.as_ref(),
+                Bound::Unbounded => {}
+            }
+
             if !self.is_valid() {
+                self.is_valid = false;
                 return Ok(());
             }
 
@@ -62,6 +81,10 @@ impl StorageIterator for LsmIterator {
             }
             // empty value => As this key's data is deleted, call next() one more time.
         }
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        self.inner.num_active_iterators()
     }
 }
 
