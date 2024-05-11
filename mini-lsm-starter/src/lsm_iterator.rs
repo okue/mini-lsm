@@ -133,4 +133,8 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
         }
         Ok(())
     }
+
+    fn num_active_iterators(&self) -> usize {
+        self.iter.num_active_iterators()
+    }
 }
