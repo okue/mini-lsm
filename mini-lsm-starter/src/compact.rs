@@ -144,7 +144,13 @@ impl LsmStorageInner {
         Ok(None)
     }
 
+    /// Flush the earliest memtable to the disk
     fn trigger_flush(&self) -> Result<()> {
+        let snapshot = self.state.read().clone();
+        if self.options.num_memtable_limit <= snapshot.imm_memtables.len() + 1 {
+            log::debug!("Flush memtable to sstable...");
+            self.force_flush_next_imm_memtable()?
+        }
         Ok(())
     }
 

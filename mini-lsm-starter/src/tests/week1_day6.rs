@@ -7,11 +7,14 @@ use crate::tests::harness::{check_lsm_iter_result_by_key, sync};
 
 use crate::{
     iterators::StorageIterator,
+    logger,
     lsm_storage::{LsmStorageInner, LsmStorageOptions, MiniLsm},
 };
 
 #[test]
 fn test_task1_storage_scan() {
+    logger::setup();
+
     let dir = tempdir().unwrap();
     let storage =
         Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());

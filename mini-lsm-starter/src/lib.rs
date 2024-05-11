@@ -10,6 +10,7 @@ pub mod mem_table;
 pub mod mvcc;
 pub mod table;
 pub mod wal;
+mod logger;
 
 #[cfg(test)]
 mod tests;
