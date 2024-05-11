@@ -2,6 +2,7 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use anyhow::Result;
+use bytes::Bytes;
 
 use super::StorageIterator;
 
@@ -54,6 +55,14 @@ impl<
             self.a.key()
         } else {
             self.b.key()
+        }
+    }
+
+    fn show_key(&self) -> Bytes {
+        if self.current_is_a {
+            self.a.show_key()
+        } else {
+            self.b.show_key()
         }
     }
 

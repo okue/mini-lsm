@@ -3,6 +3,7 @@ use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 
 use anyhow::Result;
+use bytes::Bytes;
 
 use crate::key::KeySlice;
 
@@ -69,6 +70,10 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
         iter.key()
     }
 
+    fn show_key(&self) -> Bytes {
+        Bytes::copy_from_slice(self.key().inner())
+    }
+
     fn value(&self) -> &[u8] {
         let iter = self.current.as_ref().unwrap().1.as_ref();
         iter.value()
@@ -84,8 +89,9 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
 
     fn next(&mut self) -> Result<()> {
         let current = self.current.as_mut().unwrap();
+        // Pop the item out of the heap if they have the same value.
         while let Some(mut min_in_heap) = self.iters.peek_mut() {
-            if min_in_heap.1.key() <= current.1.key() {
+            if min_in_heap.1.key() == current.1.key() {
                 // Case 1: an error occurred when calling `next`.
                 if let e @ Err(_) = min_in_heap.1.next() {
                     PeekMut::pop(min_in_heap);
@@ -113,5 +119,16 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
             }
         }
         Ok(())
+    }
+
+    fn num_active_iterators(&self) -> usize {
+        let mut num = 0;
+        if let Some(iter) = &self.current {
+            num += iter.1.num_active_iterators();
+        }
+        for iter in &self.iters {
+            num += iter.1.num_active_iterators();
+        }
+        num
     }
 }

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::mem;
+use std::fs::File;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::{fs, mem};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -22,7 +23,7 @@ use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
 use crate::mem_table::{map_bound, MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
-use crate::table::{SsTable, SsTableIterator};
+use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -247,6 +248,10 @@ impl LsmStorageInner {
     /// not exist.
     pub(crate) fn open(path: impl AsRef<Path>, options: LsmStorageOptions) -> Result<Self> {
         let path = path.as_ref();
+        if !path.exists() {
+            fs::create_dir(path)?;
+        }
+
         let state = LsmStorageState::create(&options);
 
         let compaction_controller = match &options.compaction_options {
@@ -335,12 +340,10 @@ impl LsmStorageInner {
         self.put(_key, &[])
     }
 
-    #[allow(dead_code)]
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {
         path.as_ref().join(format!("{:05}.sst", id))
     }
 
-    #[allow(dead_code)]
     pub(crate) fn path_of_sst(&self, id: usize) -> PathBuf {
         Self::path_of_sst_static(&self.path, id)
     }
@@ -357,7 +360,8 @@ impl LsmStorageInner {
 
     #[allow(dead_code)]
     pub(super) fn sync_dir(&self) -> Result<()> {
-        unimplemented!()
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
     }
 
     /// Force freeze the current memtable to an immutable memtable
@@ -378,7 +382,36 @@ impl LsmStorageInner {
 
     /// Force flush the earliest-created immutable memtable to disk
     pub fn force_flush_next_imm_memtable(&self) -> Result<()> {
-        unimplemented!()
+        let snapshot = {
+            let guard = self.state.read();
+            guard.clone()
+        };
+        let earliest_memtable = snapshot.imm_memtables.last();
+        if earliest_memtable.is_none() {
+            // skip
+            return Ok(());
+        }
+        let earliest_memtable = earliest_memtable.cloned().unwrap();
+        let memtable_id = earliest_memtable.id();
+
+        let mut sst = SsTableBuilder::new(self.options.block_size);
+        earliest_memtable.flush(&mut sst)?;
+        let sst = sst.build(
+            memtable_id,
+            Some(self.block_cache.clone()),
+            self.path_of_sst(memtable_id),
+        )?;
+
+        {
+            let mut guard = self.state.write();
+            let mut snapshot = guard.as_ref().clone();
+            snapshot.imm_memtables.pop();
+            snapshot.sstables.insert(memtable_id, Arc::new(sst));
+            snapshot.l0_sstables.insert(0, memtable_id);
+            *guard = Arc::new(snapshot);
+        }
+
+        Ok(())
     }
 
     pub fn new_txn(&self) -> Result<()> {
@@ -447,5 +480,61 @@ impl LsmStorageInner {
             )
             .unwrap(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::iterators::StorageIterator;
+    use crate::lsm_storage::{LsmStorageInner, LsmStorageOptions};
+    use bytes::Bytes;
+    use std::collections::Bound;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_1() {
+        let dir = tempdir().unwrap();
+        let storage = Arc::new(
+            LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap(),
+        );
+        storage.put(b"0", b"2333333").unwrap();
+        storage.put(b"00", b"2333333").unwrap();
+        storage.put(b"4", b"23").unwrap();
+        sync(&storage);
+
+        storage.delete(b"4").unwrap();
+        sync(&storage);
+
+        storage.put(b"1", b"233").unwrap();
+        storage.put(b"2", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"00", b"2333").unwrap();
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.put(b"3", b"23333").unwrap();
+        storage.delete(b"1").unwrap();
+
+        let snapshot = storage.state.read().clone();
+        let mut iter = LsmStorageInner::create_l0_sstable_iter(snapshot, Bound::Unbounded).unwrap();
+        println!("num iter: {}", iter.num_active_iterators());
+        while iter.is_valid() {
+            println!(
+                "key={:?} value={:?}",
+                iter.show_key(),
+                Bytes::copy_from_slice(iter.value())
+            );
+            let _ = iter.next();
+        }
+    }
+
+    fn sync(storage: &LsmStorageInner) {
+        storage
+            .force_freeze_memtable(&storage.state_lock.lock())
+            .unwrap();
+        storage.force_flush_next_imm_memtable().unwrap();
     }
 }

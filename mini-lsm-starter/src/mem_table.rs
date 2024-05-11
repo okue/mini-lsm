@@ -113,8 +113,13 @@ impl MemTable {
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
-    pub fn flush(&self, _builder: &mut SsTableBuilder) -> Result<()> {
-        unimplemented!()
+    pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
+        let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
+        while iter.is_valid() {
+            builder.add(iter.key(), iter.value());
+            iter.next()?;
+        }
+        Ok(())
     }
 
     pub fn id(&self) -> usize {
@@ -157,6 +162,10 @@ impl StorageIterator for MemTableIterator {
     fn key(&self) -> KeySlice {
         let (key, _) = self.borrow_item();
         KeySlice::from_slice(&key[..])
+    }
+
+    fn show_key(&self) -> Bytes {
+        Bytes::copy_from_slice(self.key().inner())
     }
 
     fn value(&self) -> &[u8] {

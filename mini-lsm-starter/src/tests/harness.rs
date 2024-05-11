@@ -168,6 +168,9 @@ where
         );
         iter.next().unwrap();
     }
+    if iter.is_valid() {
+        println!("{:?} {:?}", as_bytes(iter.key()), as_bytes(iter.value()));
+    }
     assert!(!iter.is_valid());
 }
 

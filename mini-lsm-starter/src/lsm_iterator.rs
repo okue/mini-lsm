@@ -60,27 +60,22 @@ impl StorageIterator for LsmIterator {
         }
 
         loop {
-            if let e @ Err(_) = self.inner.next() {
-                self.is_valid = false;
-                return e;
-            }
-
-            match &self.end_bound {
-                Bound::Included(end_bound) => self.is_valid = self.key() <= end_bound.as_ref(),
-                Bound::Excluded(end_bound) => self.is_valid = self.key() < end_bound.as_ref(),
-                Bound::Unbounded => {}
-            }
-
+            self.inner.next()?;
             if !self.is_valid() {
-                self.is_valid = false;
                 return Ok(());
             }
-
             if !self.value().is_empty() {
-                return Ok(());
+                break;
             }
             // empty value => As this key's data is deleted, call next() one more time.
         }
+        match &self.end_bound {
+            Bound::Included(end_bound) => self.is_valid = self.key() <= end_bound.as_ref(),
+            Bound::Excluded(end_bound) => self.is_valid = self.key() < end_bound.as_ref(),
+            Bound::Unbounded => {}
+        }
+
+        Ok(())
     }
 
     fn num_active_iterators(&self) -> usize {

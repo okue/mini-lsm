@@ -1,3 +1,5 @@
+use bytes::Bytes;
+
 pub mod concat_iterator;
 pub mod merge_iterator;
 pub mod two_merge_iterator;
@@ -9,6 +11,10 @@ pub trait StorageIterator {
 
     /// Get the current key.
     fn key(&self) -> Self::KeyType<'_>;
+
+    fn show_key(&self) -> Bytes {
+        Bytes::from("<not implemented>")
+    }
 
     /// Get the current value.
     fn value(&self) -> &[u8];
