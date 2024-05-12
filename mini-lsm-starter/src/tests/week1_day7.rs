@@ -44,6 +44,7 @@ fn test_task1_bloom_filter() {
     }
     assert_ne!(x, cnt, "bloom filter not taking effect?");
     assert_ne!(x, 0, "bloom filter not taking effect?");
+    println!("false-positive: {x}/{cnt}")
 }
 
 #[test]

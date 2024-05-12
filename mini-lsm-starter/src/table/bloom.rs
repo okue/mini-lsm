@@ -1,7 +1,4 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 
@@ -71,6 +68,16 @@ impl Bloom {
         locs as usize
     }
 
+    fn compute_hash(mut h: u32, num_of_hash: u32, nbits: usize) -> Vec<usize> {
+        let delta = (h >> 17) | (h << 15);
+        (0..num_of_hash)
+            .map(|_| {
+                h = h.wrapping_add(delta);
+                (h as usize) % nbits
+            })
+            .collect()
+    }
+
     /// Build bloom filter from key hashes
     pub fn build_from_key_hashes(keys: &[u32], bits_per_key: usize) -> Self {
         let k = (bits_per_key as f64 * 0.69) as u32;
@@ -81,7 +88,11 @@ impl Bloom {
         let mut filter = BytesMut::with_capacity(nbytes);
         filter.resize(nbytes, 0);
 
-        // TODO: build the bloom filter
+        for key in keys {
+            for bit in Self::compute_hash(key.clone(), k, nbits) {
+                filter.set_bit(bit, true);
+            }
+        }
 
         Self {
             filter: filter.freeze(),
@@ -96,10 +107,11 @@ impl Bloom {
             true
         } else {
             let nbits = self.filter.bit_len();
-            let delta = (h >> 17) | (h << 15);
-
-            // TODO: probe the bloom filter
-
+            for idx in Self::compute_hash(h, self.k as u32, nbits) {
+                if !self.filter.get_bit(idx) {
+                    return false;
+                }
+            }
             true
         }
     }
