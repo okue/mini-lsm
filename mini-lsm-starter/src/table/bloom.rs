@@ -90,7 +90,7 @@ impl Bloom {
         filter.resize(nbytes, 0);
 
         for key in keys {
-            for bit in Self::compute_hash(key.clone(), k, nbits) {
+            for bit in Self::compute_hash(*key, k, nbits) {
                 filter.set_bit(bit, true);
             }
         }

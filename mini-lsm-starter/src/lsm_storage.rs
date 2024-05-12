@@ -472,6 +472,7 @@ impl LsmStorageInner {
         state: Arc<LsmStorageState>,
         key: &[u8],
     ) -> Result<MergeIterator<SsTableIterator>> {
+        let key_hash = farmhash::fingerprint32(key);
         let mut iters: Vec<Box<SsTableIterator>> = Vec::new();
         for idx in &state.l0_sstables {
             if let Some(sstable) = state.sstables.get(idx).cloned() {
@@ -486,7 +487,14 @@ impl LsmStorageInner {
                 }
                 // Check if the key never exists in this SSTable.
                 if let Some(ref bloom) = sstable.bloom {
-                    if !bloom.may_contain(farmhash::fingerprint32(key)) {
+                    if !bloom.may_contain(key_hash) {
+                        if log::log_enabled!(log::Level::Debug) {
+                            log::debug!(
+                                "[bloom filter] Skip SSTable {sst_id} as {key:?}",
+                                sst_id = idx,
+                                key = Bytes::copy_from_slice(key)
+                            );
+                        }
                         continue;
                     }
                 }

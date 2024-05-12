@@ -24,11 +24,11 @@ pub struct BlockIterator {
 impl BlockIterator {
     fn new(block: Arc<Block>) -> Self {
         Self {
-            block,
+            first_key: block.first_key.clone(),
+            idx: 0,
             key: KeyVec::new(),  // dummy
             value_range: (0, 0), // dummy
-            idx: 0,
-            first_key: KeyVec::new(),
+            block,
         }
     }
 
@@ -69,6 +69,9 @@ impl BlockIterator {
         !self.key.is_empty()
     }
 
+    /// Seek to the given index.
+    ///
+    /// See [Block]
     fn seek(&mut self, index: usize) {
         if index >= self.block.offsets.len() {
             self.key = KeyVec::default();
@@ -77,15 +80,24 @@ impl BlockIterator {
         }
 
         let offset = self.block.offsets[index] as usize;
-        let key = self.block.get_key(index);
-        let key_len = key.len();
-        let val_len = (&self.block.data[offset + SIZEOF_U16 + key_len..]).get_u16() as usize;
+        let mut data = &self.block.data[offset..];
+
+        // key-value format:
+        // key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | value_len (u16) | value (len)
+        self.key.clear();
+        let key_overlap_len = data.get_u16() as usize;
+        let rest_key_len = data.get_u16() as usize;
+        self.key
+            .append(&self.first_key.raw_ref()[..key_overlap_len]);
+        self.key.append(&data[..rest_key_len]);
+        data.advance(rest_key_len);
+
+        let val_len = data.get_u16() as usize;
 
         self.idx = index;
-        self.key = KeyVec::from_vec(Vec::from(key));
         self.value_range = (
-            offset + SIZEOF_U16 + key_len + SIZEOF_U16,
-            offset + SIZEOF_U16 + key_len + SIZEOF_U16 + val_len,
+            offset + SIZEOF_U16 * 3 + rest_key_len,
+            offset + SIZEOF_U16 * 3 + rest_key_len + val_len,
         );
     }
 
@@ -106,9 +118,8 @@ impl BlockIterator {
         // naive search
         let mut index = 0;
         while index < self.block.offsets.len() {
-            let key_of_index = self.block.get_key(index);
-            if key_of_index >= key.raw_ref() {
-                self.seek(index);
+            self.seek(index);
+            if self.key.raw_ref() >= key.raw_ref() {
                 return;
             }
             index += 1;

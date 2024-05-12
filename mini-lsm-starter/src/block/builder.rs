@@ -1,6 +1,3 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use crate::key::{KeySlice, KeyVec};
 use bytes::BufMut;
 
@@ -33,37 +30,42 @@ impl BlockBuilder {
 
     /// Adds a key-value pair to the block. Returns false when the block is full.
     ///
-    /// -----------------------------------------------------------------------
-    /// |                           Entry #1                            | ... |
-    /// -----------------------------------------------------------------------
-    /// | key_len (2B) | key (keylen) | value_len (2B) | value (varlen) | ... |
-    /// -----------------------------------------------------------------------
+    /// ---------------------------------------------------------------------------------------------------
+    /// |                           Entry #1                                                              |
+    /// ---------------------------------------------------------------------------------------------------
+    /// | key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | value_len (u16) | value (len) |
+    /// ---------------------------------------------------------------------------------------------------
+    ///
+    /// See also [Block::encode]
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         if !self.is_empty()
-            && self.estimated_size() + key.len() + value.len() + SIZEOF_U16 * 3 > self.block_size
+            && self.estimated_size() + key.len() + value.len() + SIZEOF_U16 * 4 > self.block_size
         {
             return false;
         }
+        if self.first_key.is_empty() {
+            self.first_key.set_from_slice(key);
+        }
 
-        // add offset for the previous entry.
+        // add offset
         self.offsets.push(self.data.len() as u16);
         // add key and value
-        self.data.put_u16(key.len() as u16);
-        self.data.put_slice(key.raw_ref());
+        let key_overlap_len = self.key_overlap_length(key);
+        self.data.put_u16(key_overlap_len);
+        self.data.put_u16((key.len() as u16) - key_overlap_len);
+        self.data
+            .put_slice(&key.raw_ref()[(key_overlap_len as usize)..]);
         self.data.put_u16(value.len() as u16);
         self.data.put_slice(value);
-
-        if self.first_key.is_empty() {
-            self.first_key = key.to_key_vec();
-        }
         true
     }
 
     pub fn estimated_size(&self) -> usize {
-        SIZEOF_U16 // number of key-value pairs in the block
-            +  self.offsets.len() * SIZEOF_U16 // offsets
-            + self.data.len() // key-value pairs
+        // - key-value pairs
+        // - offsets
+        // - number of key-value pairs in the block
+        self.data.len() + self.offsets.len() * SIZEOF_U16 + SIZEOF_U16
     }
 
     /// Check if there is no key-value pair in the block.
@@ -76,6 +78,20 @@ impl BlockBuilder {
         Block {
             data: self.data,
             offsets: self.offsets,
+            first_key: self.first_key,
         }
+    }
+
+    fn key_overlap_length(&self, key: KeySlice) -> u16 {
+        let first_key = self.first_key.raw_ref();
+        let key = key.raw_ref();
+        let mut overlap_len = 0;
+        for idx in 0..first_key.len() {
+            if first_key[idx] != key[idx] {
+                return overlap_len;
+            }
+            overlap_len += 1;
+        }
+        overlap_len
     }
 }
