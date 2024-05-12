@@ -305,7 +305,7 @@ impl LsmStorageInner {
                 return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
             }
         }
-        let iter = Self::create_l0_sstable_iter(state, Bound::Included(key), Bound::Included(key))?;
+        let iter = Self::create_l0_sstable_iter_for_get(state, key)?;
         if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
             Ok(Some(Bytes::copy_from_slice(iter.value())))
         } else {
@@ -468,7 +468,37 @@ impl LsmStorageInner {
         MergeIterator::create(iters)
     }
 
-    fn create_l0_sstable_iter(
+    fn create_l0_sstable_iter_for_get(
+        state: Arc<LsmStorageState>,
+        key: &[u8],
+    ) -> Result<MergeIterator<SsTableIterator>> {
+        let mut iters: Vec<Box<SsTableIterator>> = Vec::new();
+        for idx in &state.l0_sstables {
+            if let Some(sstable) = state.sstables.get(idx).cloned() {
+                // Check if the scan range overlaps sstable.
+                if !Self::range_overlap(
+                    Bound::Included(key),
+                    Bound::Included(key),
+                    sstable.first_key().raw_ref(),
+                    sstable.last_key().raw_ref(),
+                ) {
+                    continue;
+                }
+                // Check if the key never exists in this SSTable.
+                if let Some(ref bloom) = sstable.bloom {
+                    if !bloom.may_contain(farmhash::fingerprint32(key)) {
+                        continue;
+                    }
+                }
+                let sstable_iter =
+                    SsTableIterator::create_and_seek_to_key(sstable, KeySlice::from_slice(key))?;
+                iters.push(Box::new(sstable_iter))
+            }
+        }
+        Ok(MergeIterator::create(iters))
+    }
+
+    fn create_l0_sstable_iter_for_scan(
         state: Arc<LsmStorageState>,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
@@ -518,7 +548,7 @@ impl LsmStorageInner {
             guard.clone()
         };
         let memtable_iter = Self::create_memtable_iter(state.clone(), lower, upper);
-        let sstable_iter = Self::create_l0_sstable_iter(state, lower, upper)?;
+        let sstable_iter = Self::create_l0_sstable_iter_for_scan(state, lower, upper)?;
         Ok(FusedIterator::new(
             LsmIterator::new(
                 TwoMergeIterator::create(memtable_iter, sstable_iter)?,
@@ -567,9 +597,12 @@ mod tests {
         storage.delete(b"1").unwrap();
 
         let snapshot = storage.state.read().clone();
-        let mut iter =
-            LsmStorageInner::create_l0_sstable_iter(snapshot, Bound::Unbounded, Bound::Unbounded)
-                .unwrap();
+        let mut iter = LsmStorageInner::create_l0_sstable_iter_for_scan(
+            snapshot,
+            Bound::Unbounded,
+            Bound::Unbounded,
+        )
+        .unwrap();
         println!("num iter: {}", iter.num_active_iterators());
         while iter.is_valid() {
             println!(

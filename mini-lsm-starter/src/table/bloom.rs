@@ -1,3 +1,4 @@
+use std::fmt::{Debug, Formatter};
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -68,9 +69,9 @@ impl Bloom {
         locs as usize
     }
 
-    fn compute_hash(mut h: u32, num_of_hash: u32, nbits: usize) -> Vec<usize> {
+    fn compute_hash(mut h: u32, k: u32, nbits: usize) -> Vec<usize> {
         let delta = (h >> 17) | (h << 15);
-        (0..num_of_hash)
+        (0..k)
             .map(|_| {
                 h = h.wrapping_add(delta);
                 (h as usize) % nbits
@@ -114,5 +115,22 @@ impl Bloom {
             }
             true
         }
+    }
+}
+
+impl Debug for Bloom {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let binary = self
+            .filter
+            .to_vec()
+            .iter()
+            .map(|&byte| format!("{:08b}", byte))
+            .collect::<Vec<String>>()
+            .join("");
+        f.debug_struct("Bloom")
+            .field("k", &self.k)
+            .field("_nbits", &binary.len())
+            .field("filter", &binary)
+            .finish()
     }
 }

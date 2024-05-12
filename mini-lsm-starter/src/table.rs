@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::fmt::Formatter;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -122,7 +124,6 @@ pub struct SsTable {
     block_cache: Option<Arc<BlockCache>>,
     first_key: KeyBytes,
     last_key: KeyBytes,
-    #[allow(dead_code)]
     pub(crate) bloom: Option<Bloom>,
     /// The maximum timestamp stored in this SST, implemented in week 3.
     max_ts: u64,
@@ -139,8 +140,15 @@ impl SsTable {
     /// See [SsTableBuilder::build].
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let block_meta_offset = (&file.read(file.size - 4, 4)?[..]).get_u32() as u64;
-        let meta_section = file.read(block_meta_offset, file.size - 4 - block_meta_offset)?;
-        let block_meta = BlockMeta::decode_block_meta(&meta_section[..]);
+        let mut meta_section =
+            &file.read(block_meta_offset, file.size - 4 - block_meta_offset)?[..];
+        // read block metadata
+        let block_meta_len = meta_section.get_u32() as usize;
+        let block_meta = BlockMeta::decode_block_meta(&meta_section[..block_meta_len]);
+        meta_section.advance(block_meta_len);
+        // read bloom filter
+        let bloom_len = meta_section.get_u32() as usize;
+        let bloom = Bloom::decode(&meta_section[..bloom_len])?;
 
         let sstable = Self {
             file,
@@ -150,7 +158,7 @@ impl SsTable {
             first_key: block_meta.first().unwrap().first_key.clone(),
             last_key: block_meta.last().unwrap().last_key.clone(),
             block_meta,
-            bloom: None,
+            bloom: Some(bloom),
             max_ts: 0,
         };
         Ok(sstable)
@@ -213,7 +221,7 @@ impl SsTable {
             .min(self.num_of_blocks() - 1)
     }
 
-    /// Get number of data elocks.
+    /// Get number of data blocks.
     pub fn num_of_blocks(&self) -> usize {
         self.block_meta.len()
     }
@@ -239,30 +247,16 @@ impl SsTable {
     }
 }
 
-mod tests {
-    #[test]
-    fn check_partition_point() {
-        let l = [1, 2, 4, 6];
-        // 0
-        assert_eq!(l.partition_point(|x| x <= &0), 0);
-        assert_eq!(l.partition_point(|x| x < &0), 0);
-        // 1
-        assert_eq!(l.partition_point(|x| x <= &1), 1);
-        assert_eq!(l.partition_point(|x| x < &1), 0);
-        // 2
-        assert_eq!(l.partition_point(|x| x <= &2), 2);
-        assert_eq!(l.partition_point(|x| x < &2), 1);
-        // 3
-        assert_eq!(l.partition_point(|x| x <= &3), 2);
-        assert_eq!(l.partition_point(|x| x < &3), 2);
-        // 4
-        assert_eq!(l.partition_point(|x| x <= &4), 3);
-        assert_eq!(l.partition_point(|x| x < &4), 2);
-        // 5
-        assert_eq!(l.partition_point(|x| x <= &5), 3);
-        assert_eq!(l.partition_point(|x| x < &5), 3);
-        // 6
-        assert_eq!(l.partition_point(|x| x <= &6), 4);
-        assert_eq!(l.partition_point(|x| x < &6), 3);
+impl Debug for SsTable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SsTable")
+            .field("sst_id", &self.sst_id())
+            .field("table_size", &self.table_size())
+            .field("num_of_blocks", &self.num_of_blocks())
+            .field("first_key", &self.first_key())
+            .field("last_key", &self.last_key())
+            .field("max_ts", &self.max_ts())
+            .field("bloom", &self.bloom)
+            .finish()
     }
 }

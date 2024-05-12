@@ -112,7 +112,7 @@ impl MemTable {
         iter
     }
 
-    /// Flush the mem-table to SSTable. Implement in week 1 day 6.
+    /// Flush the mem-table to SSTable.
     pub fn flush(&self, builder: &mut SsTableBuilder) -> Result<()> {
         let mut iter = self.scan(Bound::Unbounded, Bound::Unbounded);
         while iter.is_valid() {
