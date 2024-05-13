@@ -147,13 +147,13 @@ pub struct MiniLsm {
     pub(crate) inner: Arc<LsmStorageInner>,
     /// Notifies the L0 flush thread to stop working. (In week 1 day 6)
     flush_notifier: crossbeam_channel::Sender<()>,
-    #[allow(dead_code)]
     /// The handle for the flush thread. (In week 1 day 6)
+    #[allow(dead_code)]
     flush_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// Notifies the compaction thread to stop working. (In week 2)
     compaction_notifier: crossbeam_channel::Sender<()>,
-    #[allow(dead_code)]
     /// The handle for the compaction thread. (In week 2)
+    #[allow(dead_code)]
     compaction_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -319,13 +319,14 @@ impl LsmStorageInner {
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let size = {
             let guard = self.state.read();
-            guard.memtable.put(_key, _value)?;
+            guard.memtable.put(key, value)?;
             guard.memtable.approximate_size()
         };
 
+        // Freeze memtable to immutable if the size > target_sst_size.
         if size > self.options.target_sst_size {
             let lock = self.state_lock.lock();
             let size = self.state.read().memtable.approximate_size();
@@ -369,11 +370,13 @@ impl LsmStorageInner {
     pub fn force_freeze_memtable(&self, _state_lock_observer: &MutexGuard<'_, ()>) -> Result<()> {
         // let memtable = MemTable::create_with_wal()?;
         let new_memtable = MemTable::create(self.next_sst_id());
+        log::debug!("New memtable id: {}", new_memtable.id());
         {
             let mut guard = self.state.write();
 
             let mut snapshot = guard.as_ref().clone();
             let old_memtable = mem::replace(&mut snapshot.memtable, Arc::new(new_memtable));
+            log::debug!("Frozen memtable id: {}", old_memtable.id());
             snapshot.imm_memtables.insert(0, old_memtable);
 
             *guard = Arc::new(snapshot);
@@ -406,10 +409,18 @@ impl LsmStorageInner {
         {
             let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
-            snapshot.imm_memtables.pop();
-            snapshot.sstables.insert(memtable_id, Arc::new(sst));
-            snapshot.l0_sstables.insert(0, memtable_id);
-            *guard = Arc::new(snapshot);
+            if snapshot.l0_sstables.contains(&memtable_id) {
+                log::debug!(
+                    "Skip because imm memtable (id={}) is already flushed to SSTable.",
+                    memtable_id
+                );
+            } else {
+                snapshot.imm_memtables.pop();
+                snapshot.sstables.insert(memtable_id, Arc::new(sst));
+                snapshot.l0_sstables.insert(0, memtable_id);
+                log::debug!("Flush imm memtable (id={}) to SSTable.", memtable_id);
+                *guard = Arc::new(snapshot);
+            }
         }
 
         Ok(())

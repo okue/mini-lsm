@@ -1,6 +1,7 @@
 use env_logger::{Target, WriteStyle};
 use log::LevelFilter;
 use std::io::Write;
+use std::thread;
 
 pub fn setup() {
     env_logger::builder()
@@ -13,10 +14,11 @@ pub fn setup() {
             let style = buf.default_level_style(record.level());
             writeln!(
                 buf,
-                "[{time} {style}{level}{style:#} {file}:{line}] {msg}",
+                "[{time} {style}{level}{style:#} {file}:{line}] [{thread}] {msg}",
                 time = buf.timestamp(),
                 level = record.level(),
                 style = style,
+                thread = thread::current().name().unwrap_or(""),
                 file = record.file().unwrap_or("unknown"),
                 line = record.line().unwrap_or(0),
                 msg = record.args(),

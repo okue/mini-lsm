@@ -28,7 +28,7 @@ enum CompactionStrategy {
 struct Args {
     #[arg(long, default_value = "lsm.db")]
     path: PathBuf,
-    #[arg(long, default_value = "leveled")]
+    #[arg(long, default_value = "none")]
     compaction: CompactionStrategy,
     #[arg(long)]
     enable_wal: bool,
@@ -149,7 +149,6 @@ enum Command {
         begin: Option<String>,
         end: Option<String>,
     },
-
     Dump,
     Flush,
     FullCompaction,
@@ -241,9 +240,7 @@ struct Repl {
     app_name: String,
     description: String,
     prompt: String,
-
     handler: ReplHandler,
-
     editor: DefaultEditor,
 }
 

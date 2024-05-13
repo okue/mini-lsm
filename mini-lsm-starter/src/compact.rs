@@ -147,8 +147,12 @@ impl LsmStorageInner {
     /// Flush the earliest memtable to the disk
     fn trigger_flush(&self) -> Result<()> {
         let snapshot = self.state.read().clone();
-        if self.options.num_memtable_limit <= snapshot.imm_memtables.len() + 1 {
-            log::debug!("Flush memtable to sstable...");
+        let num_of_memtables = if snapshot.memtable.is_empty() {
+            snapshot.imm_memtables.len()
+        } else {
+            snapshot.imm_memtables.len() + 1
+        };
+        if self.options.num_memtable_limit <= num_of_memtables {
             self.force_flush_next_imm_memtable()?
         }
         Ok(())
@@ -159,17 +163,19 @@ impl LsmStorageInner {
         rx: crossbeam_channel::Receiver<()>,
     ) -> Result<Option<std::thread::JoinHandle<()>>> {
         let this = self.clone();
-        let handle = std::thread::spawn(move || {
-            let ticker = crossbeam_channel::tick(Duration::from_millis(50));
-            loop {
-                crossbeam_channel::select! {
-                    recv(ticker) -> _ => if let Err(e) = this.trigger_flush() {
-                        eprintln!("flush failed: {}", e);
-                    },
-                    recv(rx) -> _ => return
+        let handle = std::thread::Builder::new()
+            .name("flusher".to_string())
+            .spawn(move || {
+                let ticker = crossbeam_channel::tick(Duration::from_millis(50));
+                loop {
+                    crossbeam_channel::select! {
+                        recv(ticker) -> _ => if let Err(e) = this.trigger_flush() {
+                            eprintln!("flush failed: {}", e);
+                        },
+                        recv(rx) -> _ => return
+                    }
                 }
-            }
-        });
+            })?;
         Ok(Some(handle))
     }
 }
