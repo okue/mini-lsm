@@ -65,6 +65,10 @@ impl SsTableBuilder {
         self.data.len() + self.builder.estimated_size()
     }
 
+    pub fn num_of_entries(&self) -> usize {
+        self.key_hashes.len()
+    }
+
     /// Builds the SSTable and writes it to the given path. Use the `FileObject` structure to manipulate the disk objects.
     ///
     /// --------------------------------------------------------------------------------------------------------------------------

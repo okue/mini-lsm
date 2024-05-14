@@ -120,7 +120,6 @@ pub struct SsTable {
     /// The offset that indicates the start point of meta blocks in `file`.
     pub(crate) block_meta_offset: usize,
     id: usize,
-    #[allow(dead_code)]
     block_cache: Option<Arc<BlockCache>>,
     first_key: KeyBytes,
     last_key: KeyBytes,

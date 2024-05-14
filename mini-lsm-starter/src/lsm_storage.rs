@@ -127,9 +127,7 @@ pub enum CompactionFilter {
 pub(crate) struct LsmStorageInner {
     pub(crate) state: Arc<RwLock<Arc<LsmStorageState>>>,
     pub(crate) state_lock: Mutex<()>,
-    #[allow(dead_code)]
     path: PathBuf,
-    #[allow(dead_code)]
     pub(crate) block_cache: Arc<BlockCache>,
     next_sst_id: AtomicUsize,
     pub(crate) options: Arc<LsmStorageOptions>,

@@ -21,6 +21,7 @@ pub struct LeveledCompactionOptions {
 }
 
 pub struct LeveledCompactionController {
+    #[allow(dead_code)]
     options: LeveledCompactionOptions,
 }
 
@@ -29,6 +30,7 @@ impl LeveledCompactionController {
         Self { options }
     }
 
+    #[allow(dead_code)]
     fn find_overlapping_ssts(
         &self,
         _snapshot: &LsmStorageState,

@@ -20,6 +20,7 @@ pub struct SimpleLeveledCompactionTask {
 }
 
 pub struct SimpleLeveledCompactionController {
+    #[allow(dead_code)]
     options: SimpleLeveledCompactionOptions,
 }
 

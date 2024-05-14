@@ -1,22 +1,23 @@
-#![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
-
-mod leveled;
-mod simple_leveled;
-mod tiered;
-
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-pub use leveled::{LeveledCompactionController, LeveledCompactionOptions, LeveledCompactionTask};
 use serde::{Deserialize, Serialize};
+
+pub use leveled::{LeveledCompactionController, LeveledCompactionOptions, LeveledCompactionTask};
 pub use simple_leveled::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, SimpleLeveledCompactionTask,
 };
 pub use tiered::{TieredCompactionController, TieredCompactionOptions, TieredCompactionTask};
 
+use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::StorageIterator;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
-use crate::table::SsTable;
+use crate::table::{SsTableBuilder, SsTableIterator};
+
+mod leveled;
+mod simple_leveled;
+mod tiered;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CompactionTask {
@@ -30,6 +31,7 @@ pub enum CompactionTask {
 }
 
 impl CompactionTask {
+    #[allow(dead_code)]
     fn compact_to_bottom_level(&self) -> bool {
         match self {
             CompactionTask::ForceFullCompaction { .. } => true,
@@ -40,6 +42,7 @@ impl CompactionTask {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) enum CompactionController {
     Leveled(LeveledCompactionController),
     Tiered(TieredCompactionController),
@@ -48,6 +51,7 @@ pub(crate) enum CompactionController {
 }
 
 impl CompactionController {
+    #[allow(dead_code)]
     pub fn generate_compaction_task(&self, snapshot: &LsmStorageState) -> Option<CompactionTask> {
         match self {
             CompactionController::Leveled(ctrl) => ctrl
@@ -63,6 +67,7 @@ impl CompactionController {
         }
     }
 
+    #[allow(dead_code)]
     pub fn apply_compaction_result(
         &self,
         snapshot: &LsmStorageState,
@@ -85,6 +90,7 @@ impl CompactionController {
 }
 
 impl CompactionController {
+    #[allow(dead_code)]
     pub fn flush_to_l0(&self) -> bool {
         matches!(
             self,
@@ -102,17 +108,97 @@ pub enum CompactionOptions {
     Tiered(TieredCompactionOptions),
     /// Simple leveled compaction
     Simple(SimpleLeveledCompactionOptions),
-    /// In no compaction mode (week 1), always flush to L0
+    /// In no compaction mode, always flush to L0
     NoCompaction,
 }
 
 impl LsmStorageInner {
-    fn compact(&self, _task: &CompactionTask) -> Result<Vec<Arc<SsTable>>> {
-        unimplemented!()
+    fn compact(&self, task: &CompactionTask) -> Result<()> {
+        match task {
+            CompactionTask::Leveled(_) => {
+                unimplemented!()
+            }
+            CompactionTask::Tiered(_) => {
+                unimplemented!()
+            }
+            CompactionTask::Simple(_) => {
+                unimplemented!()
+            }
+            CompactionTask::ForceFullCompaction {
+                l0_sstables,
+                l1_sstables,
+            } => {
+                let snapshot = self.state.read().clone();
+                let mut iters = Vec::new();
+                for idx in l0_sstables.iter().chain(l1_sstables) {
+                    if let Some(table) = snapshot.sstables.get(idx).cloned() {
+                        iters.push(Box::new(SsTableIterator::create_and_seek_to_first(table)?));
+                    }
+                }
+
+                let sstables = {
+                    let mut sstables = Vec::new();
+                    let mut sst_builder = SsTableBuilder::new(self.options.block_size);
+                    let mut iter = MergeIterator::create(iters);
+                    while iter.is_valid() {
+                        // Skip deleted key
+                        if !iter.value().is_empty() {
+                            sst_builder.add(iter.key(), iter.value());
+                        }
+                        if sst_builder.estimated_size() >= self.options.target_sst_size {
+                            let sst_id = self.next_sst_id();
+                            let sst = sst_builder.build(
+                                sst_id,
+                                Some(self.block_cache.clone()),
+                                self.path_of_sst(sst_id),
+                            )?;
+                            sstables.push(sst);
+                            sst_builder = SsTableBuilder::new(self.options.block_size);
+                        }
+                        iter.next()?;
+                    }
+                    if sst_builder.num_of_entries() > 0 {
+                        let sst_id = self.next_sst_id();
+                        let sst = sst_builder.build(
+                            sst_id,
+                            Some(self.block_cache.clone()),
+                            self.path_of_sst(sst_id),
+                        )?;
+                        sstables.push(sst);
+                    }
+                    sstables
+                };
+
+                {
+                    let mut guard = self.state.write();
+                    let mut snapshot = guard.as_ref().clone();
+                    snapshot.levels.get_mut(0).map(|l| {
+                        let ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
+                        l.1 = ids;
+                    });
+                    snapshot.l0_sstables.retain(|e| !l0_sstables.contains(e));
+                    for table in sstables {
+                        snapshot.sstables.insert(table.sst_id(), Arc::new(table));
+                    }
+                    *guard = Arc::new(snapshot);
+                };
+                Ok(())
+            }
+        }
     }
 
     pub fn force_full_compaction(&self) -> Result<()> {
-        unimplemented!()
+        let snapshot = self.state.read().clone();
+        self.compact(&CompactionTask::ForceFullCompaction {
+            l0_sstables: snapshot.l0_sstables.clone(),
+            l1_sstables: snapshot
+                .levels
+                .get(0)
+                .cloned()
+                .map(|l| l.1)
+                .unwrap_or(Vec::default()),
+        })?;
+        Ok(())
     }
 
     fn trigger_compaction(&self) -> Result<()> {

@@ -17,6 +17,7 @@ pub struct TieredCompactionOptions {
 }
 
 pub struct TieredCompactionController {
+    #[allow(dead_code)]
     options: TieredCompactionOptions,
 }
 
