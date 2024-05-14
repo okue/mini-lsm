@@ -124,5 +124,7 @@ impl BlockIterator {
             }
             index += 1;
         }
+        // Case the key that >= `key` is not found.
+        self.seek(index);
     }
 }
