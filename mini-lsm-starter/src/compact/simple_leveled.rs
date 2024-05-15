@@ -4,8 +4,14 @@ use crate::lsm_storage::LsmStorageState;
 
 #[derive(Debug, Clone)]
 pub struct SimpleLeveledCompactionOptions {
+    /// lower level number of files / upper level number of files.
+    /// In reality, we should compute the actual size of the files.
+    /// However, we simplified the equation to use number of files to make it easier to do the simulation.
+    /// When the ratio is too low (upper level has too many files), we should trigger a compaction
     pub size_ratio_percent: usize,
+    /// when the number of SSTs in L0 is larger than or equal to this number, trigger a compaction of L0 and L1.
     pub level0_file_num_compaction_trigger: usize,
+    /// the number of levels (excluding L0) in the LSM tree.
     pub max_levels: usize,
 }
 

@@ -117,13 +117,13 @@ pub enum CompactionOptions {
 impl LsmStorageInner {
     fn compact(&self, task: &CompactionTask) -> Result<()> {
         match task {
-            CompactionTask::Leveled(_) => {
+            CompactionTask::Leveled(_task) => {
                 unimplemented!()
             }
-            CompactionTask::Tiered(_) => {
+            CompactionTask::Tiered(_task) => {
                 unimplemented!()
             }
-            CompactionTask::Simple(_) => {
+            CompactionTask::Simple(_task) => {
                 unimplemented!()
             }
             CompactionTask::ForceFullCompaction {
@@ -193,6 +193,7 @@ impl LsmStorageInner {
                     }
                     *guard = Arc::new(snapshot);
                 };
+                // TODO: deleted unreachable SST files.
                 Ok(())
             }
         }
