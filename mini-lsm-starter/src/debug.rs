@@ -1,30 +1,64 @@
-use crate::lsm_storage::{LsmStorageInner, MiniLsm};
+use crate::lsm_storage::{LsmStorageInner, LsmStorageOptions, LsmStorageState, MiniLsm};
+use std::fmt::Write;
 
-impl LsmStorageInner {
-    pub fn dump_structure(&self) {
-        let snapshot = self.state.read();
+impl LsmStorageState {
+    pub fn dump_structure(&self, options: Option<&LsmStorageOptions>) -> anyhow::Result<()> {
+        let mut message = String::new();
 
-        println!(
+        writeln!(message, "dump structure...")?;
+        writeln!(
+            message,
             "memtable: {} KB",
-            &snapshot.memtable.approximate_size() >> 10
-        );
+            &self.memtable.approximate_size() >> 10
+        )?;
 
-        let ids = snapshot
+        let ids = self
             .imm_memtables
             .iter()
             .map(|m| m.id())
             .collect::<Vec<usize>>();
-        println!("imm memtable ({}): {:?}", snapshot.imm_memtables.len(), ids);
+        writeln!(
+            message,
+            "imm memtable ({}): {:?}",
+            self.imm_memtables.len(),
+            ids
+        )?;
 
-        println!(
+        writeln!(
+            message,
             "L0 ({}): {:?}",
-            snapshot.l0_sstables.len(),
-            snapshot.l0_sstables,
-        );
-        for (level, files) in &snapshot.levels {
-            println!("L{level} ({}): {:?}", files.len(), files);
+            self.l0_sstables.len(),
+            self.l0_sstables,
+        )?;
+        for (level, files) in &self.levels {
+            writeln!(message, "L{level} ({}): {:?}", files.len(), files)?;
         }
-        println!("Options: {:?}", self.options);
+
+        let mut sstables = self.sstables.values().cloned().collect::<Vec<_>>();
+        sstables.sort_by_key(|sst| sst.sst_id());
+        for sst in sstables {
+            writeln!(
+                message,
+                "sst_id: {} [{:?} ~ {:?}]",
+                sst.sst_id(),
+                sst.first_key().inner(),
+                sst.last_key().inner()
+            )?
+        }
+
+        if let Some(options) = options {
+            writeln!(message, "Options: {:?}", options)?;
+        }
+
+        log::info!("{}", message);
+        Ok(())
+    }
+}
+
+impl LsmStorageInner {
+    pub fn dump_structure(&self) {
+        let snapshot = self.state.read();
+        let _ = snapshot.dump_structure(Some(&self.options));
     }
 }
 

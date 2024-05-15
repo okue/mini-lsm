@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::{fs, mem};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
@@ -68,6 +68,15 @@ impl LsmStorageState {
             levels,
             sstables: Default::default(),
         }
+    }
+
+    pub fn get_sst_ids(&self, level: usize) -> Vec<usize> {
+        self.levels
+            .iter()
+            .find(|item| item.0 == level)
+            .map(|(_, ids)| ids)
+            .cloned()
+            .unwrap_or(Vec::new())
     }
 }
 
@@ -305,13 +314,10 @@ impl LsmStorageInner {
                 return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
             }
         }
-        // L0 sstable
-        let iter = Self::create_l0_sstable_iter_for_get(state.clone(), key)?;
-        if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
-            return Ok(Some(Bytes::copy_from_slice(iter.value())));
-        }
-        // L1 sstable
-        let iter = Self::create_l1_sstable_iter_for_get(state, key)?;
+        let iter = TwoMergeIterator::create(
+            Self::create_l0_sstable_iter_for_get(state.clone(), key)?,
+            Self::create_ln_sstable_iter_for_get(state, key)?,
+        )?;
         if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
             return Ok(Some(Bytes::copy_from_slice(iter.value())));
         }
@@ -503,13 +509,6 @@ impl LsmStorageInner {
                 // Check if the key never exists in this SSTable.
                 if let Some(ref bloom) = sstable.bloom {
                     if !bloom.may_contain(key_hash) {
-                        if log::log_enabled!(log::Level::Debug) {
-                            log::debug!(
-                                "[bloom filter] Skip SSTable {sst_id} as {key:?}",
-                                sst_id = idx,
-                                key = Bytes::copy_from_slice(key)
-                            );
-                        }
                         continue;
                     }
                 }
@@ -560,7 +559,7 @@ impl LsmStorageInner {
         Ok(MergeIterator::create(iters))
     }
 
-    fn create_l1_sstable_iter_for_get(
+    fn create_ln_sstable_iter_for_get(
         state: Arc<LsmStorageState>,
         key: &[u8],
     ) -> Result<MergeIterator<SstConcatIterator>> {
@@ -579,7 +578,7 @@ impl LsmStorageInner {
         Ok(MergeIterator::create(iters))
     }
 
-    fn create_l1_sstable_iter_for_scan(
+    fn create_ln_sstable_iter_for_scan(
         state: Arc<LsmStorageState>,
         lower: Bound<&[u8]>,
     ) -> Result<MergeIterator<SstConcatIterator>> {
@@ -587,8 +586,14 @@ impl LsmStorageInner {
         for (_, ids) in &state.levels {
             let sstable_iters = ids
                 .iter()
-                .filter_map(|sst_id| state.sstables.get(sst_id).cloned())
-                .collect::<Vec<_>>();
+                .map(|sst_id| {
+                    state
+                        .sstables
+                        .get(sst_id)
+                        .cloned()
+                        .ok_or_else(|| anyhow!("sst_id {} not found", sst_id))
+                })
+                .collect::<Result<Vec<_>>>()?;
             let sstable_concat_iter = match lower {
                 Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(
                     sstable_iters,
@@ -623,12 +628,12 @@ impl LsmStorageInner {
         };
         let memtable_iter = Self::create_memtable_iter(state.clone(), lower, upper);
         let l0_sstable_iter = Self::create_l0_sstable_iter_for_scan(state.clone(), lower, upper)?;
-        let l1_sstable_iter = Self::create_l1_sstable_iter_for_scan(state, lower)?;
+        let ln_sstable_iter = Self::create_ln_sstable_iter_for_scan(state, lower)?;
         Ok(FusedIterator::new(
             LsmIterator::new(
                 TwoMergeIterator::create(
                     TwoMergeIterator::create(memtable_iter, l0_sstable_iter)?,
-                    l1_sstable_iter,
+                    ln_sstable_iter,
                 )?,
                 map_bound(upper),
             )
