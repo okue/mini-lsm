@@ -20,7 +20,7 @@ impl SstConcatIterator {
     pub fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
         Ok(SstConcatIterator {
             current: sstables
-                .get(0)
+                .first()
                 .map(|t| SsTableIterator::create_and_seek_to_first(t.clone()))
                 .transpose()?,
             next_sst_idx: 1,

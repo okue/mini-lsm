@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::iterators::concat_iterator::SstConcatIterator;
 pub use leveled::{LeveledCompactionController, LeveledCompactionOptions, LeveledCompactionTask};
 pub use simple_leveled::{
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, SimpleLeveledCompactionTask,
@@ -11,6 +12,7 @@ pub use simple_leveled::{
 pub use tiered::{TieredCompactionController, TieredCompactionOptions, TieredCompactionTask};
 
 use crate::iterators::merge_iterator::MergeIterator;
+use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
 use crate::table::{SsTableBuilder, SsTableIterator};
@@ -129,17 +131,26 @@ impl LsmStorageInner {
                 l1_sstables,
             } => {
                 let snapshot = self.state.read().clone();
-                let mut iters = Vec::new();
-                for idx in l0_sstables.iter().chain(l1_sstables) {
-                    if let Some(table) = snapshot.sstables.get(idx).cloned() {
-                        iters.push(Box::new(SsTableIterator::create_and_seek_to_first(table)?));
-                    }
-                }
+                let mut iter = {
+                    let l0_iters = l0_sstables
+                        .iter()
+                        .filter_map(|i| snapshot.sstables.get(i).cloned())
+                        .map(|table| {
+                            Ok(Box::new(SsTableIterator::create_and_seek_to_first(table)?))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    let l0_iter = MergeIterator::create(l0_iters);
+                    let l1_iters = l1_sstables
+                        .iter()
+                        .filter_map(|i| snapshot.sstables.get(i).cloned())
+                        .collect::<Vec<_>>();
+                    let l1_iter = SstConcatIterator::create_and_seek_to_first(l1_iters)?;
+                    TwoMergeIterator::create(l0_iter, l1_iter)?
+                };
 
                 let sstables = {
                     let mut sstables = Vec::new();
                     let mut sst_builder = SsTableBuilder::new(self.options.block_size);
-                    let mut iter = MergeIterator::create(iters);
                     while iter.is_valid() {
                         // Skip deleted key
                         if !iter.value().is_empty() {
@@ -172,10 +183,10 @@ impl LsmStorageInner {
                 {
                     let mut guard = self.state.write();
                     let mut snapshot = guard.as_ref().clone();
-                    snapshot.levels.get_mut(0).map(|l| {
+                    if let Some((_, sst_ids)) = snapshot.levels.get_mut(0) {
                         let ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
-                        l.1 = ids;
-                    });
+                        *sst_ids = ids;
+                    }
                     snapshot.l0_sstables.retain(|e| !l0_sstables.contains(e));
                     for table in sstables {
                         snapshot.sstables.insert(table.sst_id(), Arc::new(table));
@@ -193,11 +204,12 @@ impl LsmStorageInner {
             l0_sstables: snapshot.l0_sstables.clone(),
             l1_sstables: snapshot
                 .levels
-                .get(0)
+                .first()
                 .cloned()
                 .map(|l| l.1)
                 .unwrap_or(Vec::default()),
         })?;
+        self.sync_dir()?;
         Ok(())
     }
 

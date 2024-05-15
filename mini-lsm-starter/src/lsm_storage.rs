@@ -15,6 +15,7 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
+use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
@@ -295,6 +296,7 @@ impl LsmStorageInner {
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         let state = self.state.read().clone();
+        // memtable
         if let Some(v) = state.memtable.get(key) {
             return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
         }
@@ -303,12 +305,17 @@ impl LsmStorageInner {
                 return if v.is_empty() { Ok(None) } else { Ok(Some(v)) };
             }
         }
-        let iter = Self::create_l0_sstable_iter_for_get(state, key)?;
+        // L0 sstable
+        let iter = Self::create_l0_sstable_iter_for_get(state.clone(), key)?;
         if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
-            Ok(Some(Bytes::copy_from_slice(iter.value())))
-        } else {
-            Ok(None)
+            return Ok(Some(Bytes::copy_from_slice(iter.value())));
         }
+        // L1 sstable
+        let iter = Self::create_l1_sstable_iter_for_get(state, key)?;
+        if iter.is_valid() && iter.key().into_inner() == key && !iter.value().is_empty() {
+            return Ok(Some(Bytes::copy_from_slice(iter.value())));
+        }
+        Ok(None)
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
@@ -358,7 +365,6 @@ impl LsmStorageInner {
         Self::path_of_wal_static(&self.path, id)
     }
 
-    #[allow(dead_code)]
     pub(super) fn sync_dir(&self) -> Result<()> {
         File::open(&self.path)?.sync_all()?;
         Ok(())
@@ -554,6 +560,57 @@ impl LsmStorageInner {
         Ok(MergeIterator::create(iters))
     }
 
+    fn create_l1_sstable_iter_for_get(
+        state: Arc<LsmStorageState>,
+        key: &[u8],
+    ) -> Result<MergeIterator<SstConcatIterator>> {
+        let mut iters: Vec<Box<SstConcatIterator>> = Vec::new();
+        for (_, ids) in &state.levels {
+            let sstable_iters = ids
+                .iter()
+                .filter_map(|sst_id| state.sstables.get(sst_id).cloned())
+                .collect::<Vec<_>>();
+            let iter = SstConcatIterator::create_and_seek_to_key(
+                sstable_iters,
+                KeySlice::from_slice(key),
+            )?;
+            iters.push(Box::new(iter));
+        }
+        Ok(MergeIterator::create(iters))
+    }
+
+    fn create_l1_sstable_iter_for_scan(
+        state: Arc<LsmStorageState>,
+        lower: Bound<&[u8]>,
+    ) -> Result<MergeIterator<SstConcatIterator>> {
+        let mut iters: Vec<Box<SstConcatIterator>> = Vec::new();
+        for (_, ids) in &state.levels {
+            let sstable_iters = ids
+                .iter()
+                .filter_map(|sst_id| state.sstables.get(sst_id).cloned())
+                .collect::<Vec<_>>();
+            let sstable_concat_iter = match lower {
+                Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(
+                    sstable_iters,
+                    KeySlice::from_slice(key),
+                )?,
+                Bound::Excluded(key) => {
+                    let mut iter = SstConcatIterator::create_and_seek_to_key(
+                        sstable_iters,
+                        KeySlice::from_slice(key),
+                    )?;
+                    if iter.is_valid() && iter.key().into_inner() == key {
+                        iter.next()?;
+                    }
+                    iter
+                }
+                Bound::Unbounded => SstConcatIterator::create_and_seek_to_first(sstable_iters)?,
+            };
+            iters.push(Box::new(sstable_concat_iter));
+        }
+        Ok(MergeIterator::create(iters))
+    }
+
     /// Create an iterator over a range of keys.
     pub fn scan(
         &self,
@@ -565,10 +622,14 @@ impl LsmStorageInner {
             guard.clone()
         };
         let memtable_iter = Self::create_memtable_iter(state.clone(), lower, upper);
-        let sstable_iter = Self::create_l0_sstable_iter_for_scan(state, lower, upper)?;
+        let l0_sstable_iter = Self::create_l0_sstable_iter_for_scan(state.clone(), lower, upper)?;
+        let l1_sstable_iter = Self::create_l1_sstable_iter_for_scan(state, lower)?;
         Ok(FusedIterator::new(
             LsmIterator::new(
-                TwoMergeIterator::create(memtable_iter, sstable_iter)?,
+                TwoMergeIterator::create(
+                    TwoMergeIterator::create(memtable_iter, l0_sstable_iter)?,
+                    l1_sstable_iter,
+                )?,
                 map_bound(upper),
             )
             .unwrap(),
