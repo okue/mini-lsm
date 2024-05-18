@@ -17,6 +17,7 @@ use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
+use crate::manifest::ManifestRecord;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
 
 mod leveled;
@@ -70,7 +71,8 @@ impl CompactionController {
         }
     }
 
-    /// Updates `l0_sstables` and `levels`, then returns new LSM state and SSTable ids to be deleted.
+    /// Updates `l0_sstables` and `levels`.
+    /// Returns new LSM state and SSTable ids to be deleted.
     pub fn apply_compaction_result(
         &self,
         snapshot: &LsmStorageState,
@@ -153,16 +155,24 @@ impl LsmStorageInner {
             l1_sstables: l1_sstables.clone(),
         };
         let sstables = self.compact(&compaction_task)?;
+        let new_sst_ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
         {
             let mut guard = self.state.write();
             let mut snapshot = guard.as_ref().clone();
 
+            // update `levels`
             let new_ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
             snapshot.levels[0].1 = new_ids;
 
+            // update `l0_sstables`
             snapshot.l0_sstables.retain(|e| !&l0_sstables.contains(e));
+
+            // update `sstables`
             for table in sstables {
                 snapshot.sstables.insert(table.sst_id(), table);
+            }
+            for sst_id in l0_sstables.iter().chain(l1_sstables.iter()) {
+                snapshot.sstables.remove(sst_id);
             }
             *guard = Arc::new(snapshot);
         };
@@ -170,6 +180,13 @@ impl LsmStorageInner {
         // Deleted needless SST files.
         for sst_id in l0_sstables.iter().chain(l1_sstables.iter()) {
             remove_file(self.path_of_sst(*sst_id))?
+        }
+        {
+            let lock = self.state_lock.lock();
+            self.manifest.as_ref().unwrap().add_record(
+                &lock,
+                ManifestRecord::Compaction(compaction_task, new_sst_ids),
+            )?;
         }
         self.sync_dir()?;
         Ok(())
@@ -320,6 +337,7 @@ impl LsmStorageInner {
 
         // Execute compaction (create new SSTables).
         let new_ssts = self.compact(&compaction_task)?;
+        let new_sst_ids = &new_ssts.iter().map(|s| s.sst_id()).collect::<Vec<_>>()[..];
         log::debug!(
             "New SSTs: {:?}",
             new_ssts.iter().map(|t| t.sst_id()).collect::<Vec<_>>()
@@ -330,7 +348,7 @@ impl LsmStorageInner {
         let (mut new_state, sst_to_delete) = self.compaction_controller.apply_compaction_result(
             guard.as_ref(),
             &compaction_task,
-            &new_ssts.iter().map(|s| s.sst_id()).collect::<Vec<_>>()[..],
+            new_sst_ids,
         );
         for sst in &sst_to_delete {
             new_state.sstables.remove(sst);
@@ -344,6 +362,13 @@ impl LsmStorageInner {
         // Deleted needless SST files.
         for sst_id in sst_to_delete {
             remove_file(self.path_of_sst(sst_id))?
+        }
+        {
+            let guard = self.state_lock.lock();
+            self.manifest.as_ref().unwrap().add_record(
+                &guard,
+                ManifestRecord::Compaction(compaction_task, new_sst_ids.to_vec()),
+            )?;
         }
         self.sync_dir()?;
         Ok(())

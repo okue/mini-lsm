@@ -5,7 +5,7 @@ impl LsmStorageState {
     pub fn dump_structure(&self, options: Option<&LsmStorageOptions>) -> anyhow::Result<()> {
         let mut message = String::new();
 
-        writeln!(message, "dump structure...")?;
+        writeln!(message, "======== dump structure =========")?;
         writeln!(
             message,
             "memtable: {} KB",
@@ -49,8 +49,9 @@ impl LsmStorageState {
         if let Some(options) = options {
             writeln!(message, "Options: {:?}", options)?;
         }
+        writeln!(message, "=================================")?;
 
-        log::info!("{}", message);
+        println!("{}", message);
         Ok(())
     }
 }

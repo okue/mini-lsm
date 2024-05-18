@@ -3,7 +3,7 @@ use log::LevelFilter;
 use std::io::Write;
 use std::thread;
 
-pub fn setup() {
+pub fn setup() -> anyhow::Result<()> {
     env_logger::builder()
         // intentionally set to false so that debugger doesn't capture.
         .is_test(false)
@@ -25,5 +25,6 @@ pub fn setup() {
             )
         })
         .parse_default_env()
-        .init();
+        .try_init()?;
+    Ok(())
 }
