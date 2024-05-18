@@ -30,7 +30,7 @@ struct Args {
     path: PathBuf,
     #[arg(long, default_value = "simple")]
     compaction: CompactionStrategy,
-    #[arg(long)]
+    #[arg(long, default_value = "true")]
     enable_wal: bool,
     #[arg(long)]
     serializable: bool,
@@ -254,9 +254,15 @@ impl Repl {
                 // Skip noop
                 continue;
             }
-            let command = Command::parse(&readline)?;
-            self.handler.handle(&command)?;
-            self.editor.add_history_entry(readline)?;
+            match Command::parse(&readline) {
+                Ok(command) => {
+                    self.handler.handle(&command)?;
+                    self.editor.add_history_entry(readline)?;
+                }
+                Err(err) => {
+                    println!("Error: {}", err);
+                }
+            }
         }
     }
 

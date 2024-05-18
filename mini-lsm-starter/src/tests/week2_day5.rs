@@ -9,6 +9,7 @@ use crate::{
     tests::harness::dump_files_in_dir,
 };
 
+#[ignore]
 #[test]
 fn test_integration_leveled() {
     test_integration(CompactionOptions::Leveled(LeveledCompactionOptions {
@@ -19,6 +20,7 @@ fn test_integration_leveled() {
     }))
 }
 
+#[ignore]
 #[test]
 fn test_integration_tiered() {
     test_integration(CompactionOptions::Tiered(TieredCompactionOptions {

@@ -90,6 +90,26 @@ impl CompactionController {
             (CompactionController::Simple(ctrl), CompactionTask::Simple(task)) => {
                 ctrl.apply_compaction_result(snapshot, task, output)
             }
+            (
+                _,
+                CompactionTask::ForceFullCompaction {
+                    l0_sstables,
+                    l1_sstables,
+                },
+            ) => {
+                let mut snapshot = snapshot.clone();
+                snapshot.levels[0].1 = output.to_vec();
+                snapshot.l0_sstables.retain(|e| !&l0_sstables.contains(e));
+
+                (
+                    snapshot,
+                    l0_sstables
+                        .iter()
+                        .chain(l1_sstables)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            }
             _ => unreachable!(),
         }
     }
@@ -154,28 +174,23 @@ impl LsmStorageInner {
             l0_sstables: l0_sstables.clone(),
             l1_sstables: l1_sstables.clone(),
         };
-        let sstables = self.compact(&compaction_task)?;
-        let new_sst_ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
-        {
-            let mut guard = self.state.write();
-            let mut snapshot = guard.as_ref().clone();
+        let new_sstables = self.compact(&compaction_task)?;
+        let new_sst_ids = new_sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
 
-            // update `levels`
-            let new_ids = sstables.iter().map(|t| t.sst_id()).collect::<Vec<_>>();
-            snapshot.levels[0].1 = new_ids;
-
-            // update `l0_sstables`
-            snapshot.l0_sstables.retain(|e| !&l0_sstables.contains(e));
-
-            // update `sstables`
-            for table in sstables {
-                snapshot.sstables.insert(table.sst_id(), table);
-            }
-            for sst_id in l0_sstables.iter().chain(l1_sstables.iter()) {
-                snapshot.sstables.remove(sst_id);
-            }
-            *guard = Arc::new(snapshot);
-        };
+        let mut guard = self.state.write();
+        let (mut new_state, sst_to_delete) = self.compaction_controller.apply_compaction_result(
+            guard.as_ref(),
+            &compaction_task,
+            &new_sst_ids[..],
+        );
+        for table in new_sstables {
+            new_state.sstables.insert(table.sst_id(), table);
+        }
+        for sst_id in sst_to_delete {
+            new_state.sstables.remove(&sst_id);
+        }
+        *guard = Arc::new(new_state);
+        drop(guard);
 
         // Deleted needless SST files.
         for sst_id in l0_sstables.iter().chain(l1_sstables.iter()) {

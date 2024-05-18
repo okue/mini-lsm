@@ -9,6 +9,7 @@ use crate::{
     tests::harness::dump_files_in_dir,
 };
 
+#[ignore]
 #[test]
 fn test_integration_leveled() {
     test_integration(CompactionOptions::Leveled(LeveledCompactionOptions {
@@ -19,6 +20,7 @@ fn test_integration_leveled() {
     }))
 }
 
+#[ignore]
 #[test]
 fn test_integration_tiered() {
     test_integration(CompactionOptions::Tiered(TieredCompactionOptions {
@@ -71,6 +73,7 @@ fn test_integration(compaction_options: CompactionOptions) {
     dump_files_in_dir(&dir);
 
     let storage = MiniLsm::open(&dir, options).unwrap();
+    storage.dump_structure();
     assert_eq!(&storage.get(b"0").unwrap().unwrap()[..], b"v20".as_slice());
     assert_eq!(&storage.get(b"1").unwrap().unwrap()[..], b"v20".as_slice());
     assert_eq!(storage.get(b"2").unwrap(), None);

@@ -6,10 +6,15 @@ impl LsmStorageState {
         let mut message = String::new();
 
         writeln!(message, "======== dump structure =========")?;
+        let memtable_size = self.memtable.approximate_size();
         writeln!(
             message,
-            "memtable: {} KB",
-            &self.memtable.approximate_size() >> 10
+            "{}",
+            if memtable_size > 1024 {
+                format!("memtable: {} KB", memtable_size >> 10)
+            } else {
+                format!("memtable: {} B", memtable_size)
+            }
         )?;
 
         let ids = self
