@@ -30,7 +30,7 @@ impl SstConcatIterator {
 
     pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
         let sst_id = sstables
-            .binary_search_by(|t| t.first_key().raw_ref().cmp(key.raw_ref()))
+            .binary_search_by(|t| t.first_key().as_key_slice().cmp(&key))
             .unwrap_or_else(|idx| idx.saturating_sub(1));
         Ok(SstConcatIterator {
             current: sstables

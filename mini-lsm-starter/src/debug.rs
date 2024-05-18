@@ -46,8 +46,8 @@ impl LsmStorageState {
                 message,
                 "sst_id: {} [{:?} ~ {:?}]",
                 sst.sst_id(),
-                sst.first_key().inner(),
-                sst.last_key().inner()
+                sst.first_key().clone().into_inner(),
+                sst.last_key().clone().into_inner()
             )?
         }
 

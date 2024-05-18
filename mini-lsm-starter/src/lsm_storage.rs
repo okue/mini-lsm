@@ -19,7 +19,7 @@ use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, TS_RANGE_BEGIN};
 use crate::logger;
 use crate::lsm_iterator::{FusedIterator, LsmIterator};
 use crate::manifest::{Manifest, ManifestRecord};
@@ -628,8 +628,8 @@ impl LsmStorageInner {
                 if !Self::range_overlap(
                     Bound::Included(key),
                     Bound::Included(key),
-                    sstable.first_key().raw_ref(),
-                    sstable.last_key().raw_ref(),
+                    sstable.first_key().key_ref(),
+                    sstable.last_key().key_ref(),
                 ) {
                     continue;
                 }
@@ -639,8 +639,10 @@ impl LsmStorageInner {
                         continue;
                     }
                 }
-                let sstable_iter =
-                    SsTableIterator::create_and_seek_to_key(sstable, KeySlice::from_slice(key))?;
+                let sstable_iter = SsTableIterator::create_and_seek_to_key(
+                    sstable,
+                    KeySlice::from_slice(key, TS_RANGE_BEGIN),
+                )?;
                 iters.push(Box::new(sstable_iter))
             }
         }
@@ -659,19 +661,20 @@ impl LsmStorageInner {
                 if !Self::range_overlap(
                     lower,
                     upper,
-                    sstable.first_key().raw_ref(),
-                    sstable.last_key().raw_ref(),
+                    sstable.first_key().key_ref(),
+                    sstable.last_key().key_ref(),
                 ) {
                     continue;
                 }
                 let sstable_iter = match lower {
-                    Bound::Included(key) => {
-                        SsTableIterator::create_and_seek_to_key(sstable, KeySlice::from_slice(key))?
-                    }
+                    Bound::Included(key) => SsTableIterator::create_and_seek_to_key(
+                        sstable,
+                        KeySlice::from_slice(key, TS_RANGE_BEGIN),
+                    )?,
                     Bound::Excluded(key) => {
                         let mut iter = SsTableIterator::create_and_seek_to_key(
                             sstable,
-                            KeySlice::from_slice(key),
+                            KeySlice::from_slice(key, TS_RANGE_BEGIN),
                         )?;
                         if iter.is_valid() && iter.key().into_inner() == key {
                             iter.next()?;
@@ -698,7 +701,7 @@ impl LsmStorageInner {
                 .collect::<Vec<_>>();
             let iter = SstConcatIterator::create_and_seek_to_key(
                 sstable_iters,
-                KeySlice::from_slice(key),
+                KeySlice::from_slice(key, TS_RANGE_BEGIN),
             )?;
             iters.push(Box::new(iter));
         }
@@ -724,12 +727,12 @@ impl LsmStorageInner {
             let sstable_concat_iter = match lower {
                 Bound::Included(key) => SstConcatIterator::create_and_seek_to_key(
                     sstable_iters,
-                    KeySlice::from_slice(key),
+                    KeySlice::from_slice(key, TS_RANGE_BEGIN),
                 )?,
                 Bound::Excluded(key) => {
                     let mut iter = SstConcatIterator::create_and_seek_to_key(
                         sstable_iters,
-                        KeySlice::from_slice(key),
+                        KeySlice::from_slice(key, TS_RANGE_BEGIN),
                     )?;
                     if iter.is_valid() && iter.key().into_inner() == key {
                         iter.next()?;
@@ -766,68 +769,5 @@ impl LsmStorageInner {
             )
             .unwrap(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::Bound;
-    use std::sync::Arc;
-
-    use bytes::Bytes;
-    use tempfile::tempdir;
-
-    use crate::iterators::StorageIterator;
-    use crate::lsm_storage::{LsmStorageInner, LsmStorageOptions};
-
-    #[test]
-    fn test_1() {
-        let dir = tempdir().unwrap();
-        let storage = Arc::new(
-            LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap(),
-        );
-        storage.put(b"0", b"2333333").unwrap();
-        storage.put(b"00", b"2333333").unwrap();
-        storage.put(b"4", b"23").unwrap();
-        sync(&storage);
-
-        storage.delete(b"4").unwrap();
-        sync(&storage);
-
-        storage.put(b"1", b"233").unwrap();
-        storage.put(b"2", b"2333").unwrap();
-        storage
-            .force_freeze_memtable(&storage.state_lock.lock())
-            .unwrap();
-        storage.put(b"00", b"2333").unwrap();
-        storage
-            .force_freeze_memtable(&storage.state_lock.lock())
-            .unwrap();
-        storage.put(b"3", b"23333").unwrap();
-        storage.delete(b"1").unwrap();
-
-        let snapshot = storage.state.read().clone();
-        let mut iter = LsmStorageInner::create_l0_sstable_iter_for_scan(
-            snapshot,
-            Bound::Unbounded,
-            Bound::Unbounded,
-        )
-        .unwrap();
-        println!("num iter: {}", iter.num_active_iterators());
-        while iter.is_valid() {
-            println!(
-                "key={:?} value={:?}",
-                iter.show_key(),
-                Bytes::copy_from_slice(iter.value())
-            );
-            let _ = iter.next();
-        }
-    }
-
-    fn sync(storage: &LsmStorageInner) {
-        storage
-            .force_freeze_memtable(&storage.state_lock.lock())
-            .unwrap();
-        storage.force_flush_next_imm_memtable().unwrap();
     }
 }

@@ -6,6 +6,7 @@ use tempfile::tempdir;
 use week2_day1::harness::construct_merge_iterator_over_storage;
 
 use super::*;
+use crate::tests::test_utils::show_iter;
 use crate::{
     iterators::{concat_iterator::SstConcatIterator, StorageIterator},
     key::{KeySlice, TS_ENABLED},
@@ -31,6 +32,9 @@ fn test_task1_full_compaction() {
     storage.delete(b"2").unwrap();
     sync(&storage);
     assert_eq!(storage.state.read().l0_sstables.len(), 3);
+    storage.dump_structure();
+    let iter = construct_merge_iterator_over_storage(&storage.state.read());
+    show_iter(iter).unwrap();
     let mut iter = construct_merge_iterator_over_storage(&storage.state.read());
     if TS_ENABLED {
         check_iter_result_by_key(

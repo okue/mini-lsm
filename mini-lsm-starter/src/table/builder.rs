@@ -39,7 +39,7 @@ impl SsTableBuilder {
 
     /// Adds a key-value pair to SSTable.
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
-        self.key_hashes.push(farmhash::fingerprint32(key.raw_ref()));
+        self.key_hashes.push(farmhash::fingerprint32(key.key_ref()));
 
         // Case: the current block is not full.
         if self.builder.add(key, value) {

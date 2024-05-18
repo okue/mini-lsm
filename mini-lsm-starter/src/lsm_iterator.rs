@@ -11,7 +11,6 @@ use crate::{
 };
 
 /// Represents the internal type for an LSM iterator.
-/// As of week 2-1, (memtable + L0 sstables) and L1 sstables.
 type LsmIteratorInner = TwoMergeIterator<
     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
     MergeIterator<SstConcatIterator>,
@@ -44,7 +43,7 @@ impl StorageIterator for LsmIterator {
         if !self.is_valid() {
             panic!("Invalid state")
         }
-        self.inner.key().raw_ref()
+        self.inner.key().key_ref()
     }
 
     fn value(&self) -> &[u8] {

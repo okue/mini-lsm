@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bytes::Buf;
 
-use crate::block::builder::SIZEOF_U16;
+use crate::block::builder::{SIZEOF_U16, SIZEOF_U64};
 use crate::key::{KeySlice, KeyVec};
 
 use super::Block;
@@ -83,21 +83,23 @@ impl BlockIterator {
         let mut data = &self.block.data[offset..];
 
         // key-value format:
-        // key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | value_len (u16) | value (len)
+        // key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | ts (u64) | value_len (u16) | value (len)
         self.key.clear();
         let key_overlap_len = data.get_u16() as usize;
         let rest_key_len = data.get_u16() as usize;
         self.key
-            .append(&self.first_key.raw_ref()[..key_overlap_len]);
+            .append(&self.first_key.key_ref()[..key_overlap_len]);
         self.key.append(&data[..rest_key_len]);
         data.advance(rest_key_len);
+        let ts = data.get_u64();
+        self.key.set_ts(ts);
 
         let val_len = data.get_u16() as usize;
 
         self.idx = index;
         self.value_range = (
-            offset + SIZEOF_U16 * 3 + rest_key_len,
-            offset + SIZEOF_U16 * 3 + rest_key_len + val_len,
+            offset + SIZEOF_U16 * 3 + SIZEOF_U64 + rest_key_len,
+            offset + SIZEOF_U16 * 3 + SIZEOF_U64 + rest_key_len + val_len,
         );
     }
 
@@ -117,9 +119,10 @@ impl BlockIterator {
     pub fn seek_to_key(&mut self, key: KeySlice) {
         // naive search
         let mut index = 0;
+        let key = key.to_key_vec();
         while index < self.block.offsets.len() {
             self.seek(index);
-            if self.key.raw_ref() >= key.raw_ref() {
+            if self.key >= key {
                 return;
             }
             index += 1;

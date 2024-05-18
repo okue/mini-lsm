@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use bytes::Bytes;
 
 use crate::{block::BlockIterator, iterators::StorageIterator, key::KeySlice};
 
@@ -89,10 +88,6 @@ impl StorageIterator for SsTableIterator {
     /// Return the `key` that's held by the underlying block iterator.
     fn key(&self) -> KeySlice {
         self.blk_iter.key()
-    }
-
-    fn show_key(&self) -> Bytes {
-        Bytes::copy_from_slice(self.key().inner())
     }
 
     /// Return the `value` that's held by the underlying block iterator.

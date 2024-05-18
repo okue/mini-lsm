@@ -3,7 +3,6 @@ use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
 
 use anyhow::Result;
-use bytes::Bytes;
 
 use crate::key::KeySlice;
 
@@ -49,6 +48,7 @@ impl<I: StorageIterator> MergeIterator<I> {
         let mut heap = BinaryHeap::new();
         for (index, iter) in iters.into_iter().enumerate() {
             if iter.is_valid() {
+                dbg!(index);
                 heap.push(HeapWrapper(index, iter));
             }
         }
@@ -68,10 +68,6 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     fn key(&self) -> KeySlice {
         let iter = self.current.as_ref().unwrap().1.as_ref();
         iter.key()
-    }
-
-    fn show_key(&self) -> Bytes {
-        Bytes::copy_from_slice(self.key().inner())
     }
 
     fn value(&self) -> &[u8] {

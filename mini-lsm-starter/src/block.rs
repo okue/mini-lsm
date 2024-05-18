@@ -20,18 +20,19 @@ impl Block {
     /// Encode the internal data to the data layout illustrated in the tutorial
     /// Note: You may want to recheck if any of the expected field is missing from your output
     ///
-    /// ------------------------------------------------------------------------------------------------------
-    /// |       Header              |        Data Section       |     Offset Section          |      Extra   |
-    /// ------------------------------------------------------------------------------------------------------
-    /// | first_key_len | first_key | Entry #1 | ... | Entry #N | Offset #1 | ... | Offset #N | num_of_elems |
-    /// ------------------------------------------------------------------------------------------------------
+    /// -----------------------------------------------------------------------------------------------------------
+    /// |       Header                   |        Data Section       |     Offset Section          |      Extra   |
+    /// -----------------------------------------------------------------------------------------------------------
+    /// | first_key_len | first_key | ts | Entry #1 | ... | Entry #N | Offset #1 | ... | Offset #N | num_of_elems |
+    /// -----------------------------------------------------------------------------------------------------------
     ///
     /// See [BlockBuilder::add].
     pub fn encode(&self) -> Bytes {
         let mut buffer = Vec::with_capacity(self.data.len() + self.offsets.len() * 2);
         // first key
-        buffer.put_u16(self.first_key.len() as u16);
-        buffer.extend_from_slice(self.first_key.raw_ref());
+        buffer.put_u16(self.first_key.key_len() as u16);
+        buffer.extend_from_slice(self.first_key.key_ref());
+        buffer.put_u64(self.first_key.ts());
         // data
         buffer.extend_from_slice(&self.data[..]);
         // offset
@@ -46,8 +47,12 @@ impl Block {
     /// Decode from the data layout, transform the input `data` to a single `Block`
     pub fn decode(mut data: &[u8]) -> Self {
         let first_key_len = data.get_u16() as usize;
-        let first_key = KeyVec::from_vec(data[..first_key_len].to_vec());
-        data.advance(first_key_len);
+        let first_key = {
+            let key_data = &data[..first_key_len];
+            data.advance(first_key_len);
+            let ts = data.get_u64();
+            KeyVec::from_vec_with_ts(key_data.to_vec(), ts)
+        };
 
         let num_of_entries = (&data[data.len() - 2..]).get_u16() as usize;
         let data_end = data.len() - SIZEOF_U16 * (num_of_entries + 1);

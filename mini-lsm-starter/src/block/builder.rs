@@ -4,6 +4,7 @@ use bytes::BufMut;
 use super::Block;
 
 pub(crate) const SIZEOF_U16: usize = std::mem::size_of::<u16>();
+pub(crate) const SIZEOF_U64: usize = std::mem::size_of::<u64>();
 
 /// Builds a block.
 pub struct BlockBuilder {
@@ -30,17 +31,15 @@ impl BlockBuilder {
 
     /// Adds a key-value pair to the block. Returns false when the block is full.
     ///
-    /// ---------------------------------------------------------------------------------------------------
-    /// |                           Entry #1                                                              |
-    /// ---------------------------------------------------------------------------------------------------
-    /// | key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | value_len (u16) | value (len) |
-    /// ---------------------------------------------------------------------------------------------------
+    /// Encoding format:
+    /// | key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len) | ts (u64) | value_len (u16) | value (len) |
     ///
     /// See also [Block::encode]
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         if !self.is_empty()
-            && self.estimated_size() + key.len() + value.len() + SIZEOF_U16 * 4 > self.block_size
+            && self.estimated_size() + key.raw_len() + value.len() + SIZEOF_U16 * 4
+                > self.block_size
         {
             return false;
         }
@@ -53,9 +52,10 @@ impl BlockBuilder {
         // add key and value
         let key_overlap_len = self.key_overlap_length(key);
         self.data.put_u16(key_overlap_len);
-        self.data.put_u16((key.len() as u16) - key_overlap_len);
+        self.data.put_u16((key.key_len() as u16) - key_overlap_len);
         self.data
-            .put_slice(&key.raw_ref()[(key_overlap_len as usize)..]);
+            .put_slice(&key.key_ref()[(key_overlap_len as usize)..]);
+        self.data.put_u64(key.ts());
         self.data.put_u16(value.len() as u16);
         self.data.put_slice(value);
         true
@@ -83,8 +83,8 @@ impl BlockBuilder {
     }
 
     fn key_overlap_length(&self, key: KeySlice) -> u16 {
-        let first_key = self.first_key.raw_ref();
-        let key = key.raw_ref();
+        let first_key = self.first_key.key_ref();
+        let key = key.key_ref();
         let mut overlap_len = 0;
         for idx in 0..first_key.len() {
             if first_key[idx] != key[idx] {

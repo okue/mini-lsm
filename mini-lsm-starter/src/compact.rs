@@ -289,7 +289,7 @@ impl LsmStorageInner {
                 let iter = TwoMergeIterator::create(l0_iter, l1_iter)?;
 
                 // Create new SSTables
-                Ok(self.generate_new_sstables(iter, true)?)
+                Ok(self.generate_new_sstables(iter, false)?)
             }
         }
     }
