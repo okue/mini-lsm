@@ -1,5 +1,3 @@
-#![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
-
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
