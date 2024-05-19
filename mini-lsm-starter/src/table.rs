@@ -156,6 +156,9 @@ impl SsTable {
         // read bloom filter
         let bloom_len = meta_section.get_u32() as usize;
         let bloom = Bloom::decode(&meta_section[..bloom_len])?;
+        meta_section.advance(bloom_len);
+        // read latest timestamp
+        let max_ts = meta_section.get_u64();
 
         let sstable = Self {
             file,
@@ -166,7 +169,7 @@ impl SsTable {
             last_key: block_meta.last().unwrap().last_key.clone(),
             block_meta,
             bloom: Some(bloom),
-            max_ts: 0,
+            max_ts,
         };
         Ok(sstable)
     }

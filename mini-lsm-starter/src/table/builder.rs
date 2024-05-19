@@ -21,6 +21,7 @@ pub struct SsTableBuilder {
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
     key_hashes: Vec<u32>,
+    latest_ts: u64,
 }
 
 impl SsTableBuilder {
@@ -34,12 +35,16 @@ impl SsTableBuilder {
             meta: Vec::default(),
             block_size,
             key_hashes: Vec::default(),
+            latest_ts: 0,
         }
     }
 
     /// Adds a key-value pair to SSTable.
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         self.key_hashes.push(farmhash::fingerprint32(key.key_ref()));
+        if key.ts() > self.latest_ts {
+            self.latest_ts = key.ts();
+        }
 
         // Case: the current block is not full.
         if self.builder.add(key, value) {
@@ -72,10 +77,10 @@ impl SsTableBuilder {
     /// Builds the SSTable and writes it to the given path. Use the `FileObject` structure to manipulate the disk objects.
     ///
     /// --------------------------------------------------------------------------------------------------------------------------
-    /// |         Block Section         |                            Meta Section                           |          Extra     |
+    /// |   Block Section   |                            Meta Section                                       |          Extra     |
     /// --------------------------------------------------------------------------------------------------------------------------
-    /// | data block | ... | data block | metadata | meta block offset | bloom filter | bloom filter offset | meta block offset  |
-    /// |                               |  varlen  |         u32       |    varlen    |        u32          |        u32         |
+    /// | data block | ...  | metadata | meta block offset | bloom filter | bloom filter offset | latest ts | meta block offset  |
+    /// |                   |  varlen  |         u32       |    varlen    |        u32          |     u64   |        u32         |
     /// --------------------------------------------------------------------------------------------------------------------------
     pub fn build(
         mut self,
@@ -103,6 +108,8 @@ impl SsTableBuilder {
             buf.put_u32(bloom_buf.len() as u32);
             buf.append(&mut bloom_buf);
         }
+        // Meta section - latest timestamp
+        buf.put_u64(self.latest_ts);
         // Extra
         buf.put_u32(meta_section_offset as u32);
 
@@ -117,8 +124,7 @@ impl SsTableBuilder {
             last_key: self.meta.last().unwrap().last_key.clone(),
             block_meta: self.meta,
             bloom: Some(bloom),
-            // TODO: timestamp
-            max_ts: 0,
+            max_ts: self.latest_ts,
         };
         Ok(sstable)
     }

@@ -1,6 +1,3 @@
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
-
 use std::{
     collections::HashSet,
     ops::Bound,
@@ -13,6 +10,7 @@ use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 use parking_lot::Mutex;
 
+use crate::mem_table::map_bound;
 use crate::{
     iterators::{two_merge_iterator::TwoMergeIterator, StorageIterator},
     lsm_iterator::{FusedIterator, LsmIterator},
@@ -30,11 +28,24 @@ pub struct Transaction {
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        unimplemented!()
+        if let Some(entry) = self.local_storage.get(key) {
+            return Ok(Some(entry.value().clone()));
+        }
+        self.inner.get_with_ts(key, self.read_ts)
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
-        unimplemented!()
+        TxnIterator::create(
+            self.clone(),
+            TwoMergeIterator::create(
+                TxnLocalIterator::create(
+                    self.local_storage.clone(),
+                    map_bound(lower),
+                    map_bound(upper),
+                )?,
+                self.inner.scan_with_ts(lower, upper, self.read_ts)?,
+            )?,
+        )
     }
 
     pub fn put(&self, key: &[u8], value: &[u8]) {
@@ -69,23 +80,51 @@ pub struct TxnLocalIterator {
     item: (Bytes, Bytes),
 }
 
+impl TxnLocalIterator {
+    fn create(
+        local_storage: Arc<SkipMap<Bytes, Bytes>>,
+        lower: Bound<Bytes>,
+        upper: Bound<Bytes>,
+    ) -> Result<Self> {
+        let mut iter = TxnLocalIterator::new(
+            local_storage,
+            |map| map.range((lower, upper)),
+            (Bytes::default(), Bytes::default()),
+        );
+        iter.next()?;
+        Ok(iter)
+    }
+}
+
 impl StorageIterator for TxnLocalIterator {
     type KeyType<'a> = &'a [u8];
 
-    fn value(&self) -> &[u8] {
-        unimplemented!()
+    fn key(&self) -> &[u8] {
+        if !self.is_valid() {
+            panic!("invalid iterator")
+        }
+        self.borrow_item().0.as_ref()
     }
 
-    fn key(&self) -> &[u8] {
-        unimplemented!()
+    fn value(&self) -> &[u8] {
+        if !self.is_valid() {
+            panic!("invalid iterator")
+        }
+        self.borrow_item().1.as_ref()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        !self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let new_item = self.with_iter_mut(|iter| {
+            iter.next()
+                .map(|e| (e.key().clone(), e.value().clone()))
+                .unwrap_or((Bytes::default(), Bytes::default()))
+        });
+        self.with_item_mut(|item| *item = new_item);
+        Ok(())
     }
 }
 
@@ -99,7 +138,8 @@ impl TxnIterator {
         txn: Arc<Transaction>,
         iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
     ) -> Result<Self> {
-        unimplemented!()
+        let iter = Self { _txn: txn, iter };
+        Ok(iter)
     }
 }
 
@@ -119,7 +159,11 @@ impl StorageIterator for TxnIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        if !self.is_valid() {
+            return Ok(());
+        }
+
+        self.iter.next()
     }
 
     fn num_active_iterators(&self) -> usize {

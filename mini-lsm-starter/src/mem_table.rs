@@ -30,18 +30,14 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     }
 }
 
-pub(crate) fn map_bound_plus_ts(bound: Bound<&[u8]>, ts: u64) -> Bound<KeySlice> {
+pub(crate) fn map_key_bound_plus_ts(bound: Bound<&[u8]>, ts: u64) -> Bound<KeyBytes> {
     match bound {
-        Bound::Included(x) => Bound::Included(KeySlice::from_slice(x, ts)),
-        Bound::Excluded(x) => Bound::Excluded(KeySlice::from_slice(x, ts)),
-        Bound::Unbounded => Bound::Unbounded,
-    }
-}
-
-pub(crate) fn map_key_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
-    match bound {
-        Bound::Included(x) => Bound::Included(x.to_key_vec().into_key_bytes()),
-        Bound::Excluded(x) => Bound::Excluded(x.to_key_vec().into_key_bytes()),
+        Bound::Included(x) => {
+            Bound::Included(KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(x), ts))
+        }
+        Bound::Excluded(x) => {
+            Bound::Excluded(KeyBytes::from_bytes_with_ts(Bytes::copy_from_slice(x), ts))
+        }
         Bound::Unbounded => Bound::Unbounded,
     }
 }
@@ -98,8 +94,8 @@ impl MemTable {
         upper: Bound<&[u8]>,
     ) -> MemTableIterator {
         self.scan(
-            map_bound_plus_ts(lower, TS_DEFAULT),
-            map_bound_plus_ts(upper, TS_DEFAULT),
+            map_key_bound_plus_ts(lower, TS_DEFAULT),
+            map_key_bound_plus_ts(upper, TS_DEFAULT),
         )
     }
 
@@ -136,10 +132,7 @@ impl MemTable {
     }
 
     /// Get an iterator over a range of keys.
-    pub fn scan(&self, lower: Bound<KeySlice>, upper: Bound<KeySlice>) -> MemTableIterator {
-        let lower = map_key_bound(lower);
-        let upper = map_key_bound(upper);
-
+    pub fn scan(&self, lower: Bound<KeyBytes>, upper: Bound<KeyBytes>) -> MemTableIterator {
         let mut iter = MemTableIterator::new(
             self.map.clone(),
             |map| map.range((lower, upper)),
@@ -171,6 +164,14 @@ impl MemTable {
     /// Only use this function when closing the database
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    pub fn max_ts(&self) -> u64 {
+        self.map
+            .iter()
+            .map(|entry| entry.key().ts())
+            .max()
+            .unwrap_or(0)
     }
 }
 

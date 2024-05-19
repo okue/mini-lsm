@@ -1,12 +1,11 @@
 use std::ops::Bound;
 use std::sync::Arc;
 
-use self::harness::{check_iter_result_by_key, MockIterator};
-use self::harness::{check_lsm_iter_result_by_key, generate_sst};
+use super::harness::{check_iter_result_by_key, MockIterator};
+use super::harness::{check_lsm_iter_result_by_key, generate_sst};
 use bytes::Bytes;
 use tempfile::tempdir;
 
-use super::*;
 use crate::{
     iterators::two_merge_iterator::TwoMergeIterator,
     lsm_storage::{LsmStorageInner, LsmStorageOptions},

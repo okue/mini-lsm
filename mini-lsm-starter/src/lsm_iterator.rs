@@ -21,28 +21,50 @@ pub struct LsmIterator {
     inner: LsmIteratorInner,
     end_bound: Bound<KeyBytes>,
     prev_key: Bytes,
+    read_ts: u64,
     is_valid: bool,
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<KeyBytes>) -> Result<Self> {
+    pub(crate) fn new(
+        iter: LsmIteratorInner,
+        end_bound: Bound<KeyBytes>,
+        read_ts: u64,
+    ) -> Result<Self> {
         let mut iter = Self {
             is_valid: iter.is_valid(),
             inner: iter,
             prev_key: Bytes::default(),
+            read_ts,
             end_bound,
         };
         if iter.is_valid() {
-            iter.update_prev_key_with_current_key();
-        }
-        if iter.is_valid() && iter.value().is_empty() {
-            iter.next()?;
+            iter.move_to_valid_ts()?;
+
+            if iter.is_valid() {
+                iter.update_prev_key_with_current_key();
+                if iter.value().is_empty() {
+                    iter.next()?;
+                }
+            }
         }
         Ok(iter)
     }
 
     fn update_prev_key_with_current_key(&mut self) {
         self.prev_key = Bytes::copy_from_slice(self.key());
+    }
+
+    fn move_to_valid_ts(&mut self) -> Result<()> {
+        loop {
+            if !self.is_valid() {
+                return Ok(());
+            }
+            if self.read_ts >= self.inner.key().ts() {
+                return Ok(());
+            }
+            self.inner.next()?;
+        }
     }
 }
 
@@ -72,17 +94,19 @@ impl StorageIterator for LsmIterator {
             return Ok(());
         }
 
+        // valid <--> key != prev_key && key's ts <= read_ts && value not empty
         loop {
             self.inner.next()?;
+            self.move_to_valid_ts()?;
             if !self.is_valid() {
                 return Ok(());
             }
-            if self.prev_key == self.inner.key().key_ref() {
-                continue;
-            }
-            self.update_prev_key_with_current_key();
-            if !self.value().is_empty() {
-                break;
+            if self.inner.key().key_ref() != self.prev_key {
+                // update prev_key regardless of being empty or not.
+                self.update_prev_key_with_current_key();
+                if !self.value().is_empty() {
+                    break;
+                }
             }
         }
         match &self.end_bound {

@@ -32,11 +32,6 @@ impl SstConcatIterator {
         let idx = sstables
             .binary_search_by(|t| t.first_key().as_key_slice().cmp(&key))
             .unwrap_or_else(|idx| idx.saturating_sub(1));
-        // log::info!(
-        //     "{}-th sst_id = {}",
-        //     idx,
-        //     sstables.get(idx).unwrap().sst_id()
-        // );
         let mut iter = SstConcatIterator {
             current: None,
             next_sst_idx: idx,
@@ -44,6 +39,7 @@ impl SstConcatIterator {
         };
         iter.update_current(Some(key))?;
         if !iter.is_valid() && !iter.is_last_table() {
+            // Move to head of next sstable.
             iter.update_current(None)?;
         }
         Ok(iter)
