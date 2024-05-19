@@ -4,6 +4,7 @@ use std::collections::Bound;
 
 use crate::iterators::concat_iterator::SstConcatIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
+use crate::key::KeyBytes;
 use crate::table::SsTableIterator;
 use crate::{
     iterators::{merge_iterator::MergeIterator, StorageIterator},
@@ -11,28 +12,37 @@ use crate::{
 };
 
 /// Represents the internal type for an LSM iterator.
-type LsmIteratorInner = TwoMergeIterator<
+pub type LsmIteratorInner = TwoMergeIterator<
     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
     MergeIterator<SstConcatIterator>,
 >;
 
 pub struct LsmIterator {
     inner: LsmIteratorInner,
-    end_bound: Bound<Bytes>,
+    end_bound: Bound<KeyBytes>,
+    prev_key: Bytes,
     is_valid: bool,
 }
 
 impl LsmIterator {
-    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<Bytes>) -> Result<Self> {
+    pub(crate) fn new(iter: LsmIteratorInner, end_bound: Bound<KeyBytes>) -> Result<Self> {
         let mut iter = Self {
             is_valid: iter.is_valid(),
             inner: iter,
+            prev_key: Bytes::default(),
             end_bound,
         };
+        if iter.is_valid() {
+            iter.update_prev_key_with_current_key();
+        }
         if iter.is_valid() && iter.value().is_empty() {
             iter.next()?;
         }
         Ok(iter)
+    }
+
+    fn update_prev_key_with_current_key(&mut self) {
+        self.prev_key = Bytes::copy_from_slice(self.key());
     }
 }
 
@@ -67,14 +77,21 @@ impl StorageIterator for LsmIterator {
             if !self.is_valid() {
                 return Ok(());
             }
+            if self.prev_key == self.inner.key().key_ref() {
+                continue;
+            }
+            self.update_prev_key_with_current_key();
             if !self.value().is_empty() {
                 break;
             }
-            // empty value => As this key's data is deleted, call next() one more time.
         }
         match &self.end_bound {
-            Bound::Included(end_bound) => self.is_valid = self.key() <= end_bound.as_ref(),
-            Bound::Excluded(end_bound) => self.is_valid = self.key() < end_bound.as_ref(),
+            Bound::Included(end_bound) => {
+                self.is_valid = self.inner.key().key_ref() <= end_bound.key_ref()
+            }
+            Bound::Excluded(end_bound) => {
+                self.is_valid = self.inner.key().key_ref() < end_bound.key_ref()
+            }
             Bound::Unbounded => {}
         }
 

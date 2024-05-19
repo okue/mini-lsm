@@ -256,13 +256,19 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
         println!("waiting for compaction to converge");
     }
 
+    storage.dump_structure();
+    assert!(storage.get(b"0000006578").unwrap().is_some());
     let mut expected_key_value_pairs = Vec::new();
     for i in 0..(max_key + 40000) {
         let key = gen_key(i);
         let value = storage.get(key.as_bytes()).unwrap();
         if let Some(val) = key_map.get(&i) {
             let expected_value = gen_value(*val);
-            assert_eq!(value, Some(Bytes::from(expected_value.clone())));
+            assert_eq!(
+                value,
+                Some(Bytes::from(expected_value.clone())),
+                "mismatch for the key `{key}`"
+            );
             expected_key_value_pairs.push((Bytes::from(key), Bytes::from(expected_value)));
         } else {
             assert!(value.is_none());

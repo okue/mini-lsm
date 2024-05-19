@@ -49,7 +49,7 @@ impl BlockBuilder {
 
         // add offset
         self.offsets.push(self.data.len() as u16);
-        // add key and value
+        // add key, ts and value
         let key_overlap_len = self.key_overlap_length(key);
         self.data.put_u16(key_overlap_len);
         self.data.put_u16((key.key_len() as u16) - key_overlap_len);

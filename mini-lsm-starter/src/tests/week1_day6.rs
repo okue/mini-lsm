@@ -159,7 +159,7 @@ fn test_task3_sst_filter() {
     let max_num = iter.num_active_iterators();
     let iter = storage
         .scan(
-            Bound::Excluded(format!("{:05}", 10000).as_bytes()),
+            Bound::Excluded(format!("{:05}", 10001).as_bytes()),
             Bound::Unbounded,
         )
         .unwrap();

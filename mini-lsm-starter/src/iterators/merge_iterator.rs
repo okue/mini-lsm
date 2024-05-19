@@ -48,7 +48,6 @@ impl<I: StorageIterator> MergeIterator<I> {
         let mut heap = BinaryHeap::new();
         for (index, iter) in iters.into_iter().enumerate() {
             if iter.is_valid() {
-                dbg!(index);
                 heap.push(HeapWrapper(index, iter));
             }
         }

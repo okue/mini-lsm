@@ -69,7 +69,8 @@ impl Manifest {
 
     pub fn add_record_when_init(&self, record: ManifestRecord) -> Result<()> {
         let mut file = self.file.lock();
-        file.write_all(&serde_json::to_vec(&record)?)?;
+        file.write_all(&serde_json::to_vec(&record)?)
+            .context("failed to write manifest record to the file")?;
         file.sync_all()?;
         Ok(())
     }

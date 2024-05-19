@@ -36,7 +36,6 @@ pub enum CompactionTask {
 }
 
 impl CompactionTask {
-    #[allow(dead_code)]
     fn compact_to_bottom_level(&self) -> bool {
         match self {
             CompactionTask::ForceFullCompaction { .. } => true,
@@ -47,7 +46,6 @@ impl CompactionTask {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) enum CompactionController {
     Leveled(LeveledCompactionController),
     Tiered(TieredCompactionController),
@@ -116,7 +114,6 @@ impl CompactionController {
 }
 
 impl CompactionController {
-    #[allow(dead_code)]
     pub fn flush_to_l0(&self) -> bool {
         matches!(
             self,
@@ -220,7 +217,6 @@ impl LsmStorageInner {
                 upper_level_sst_ids,
                 lower_level,
                 lower_level_sst_ids,
-                is_lower_level_bottom_level,
                 ..
             }) => {
                 log::debug!(
@@ -252,13 +248,13 @@ impl LsmStorageInner {
                                 })
                                 .collect::<Result<Vec<_>>>()?,
                         );
-                        let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
-                        self.generate_new_sstables(iter, *is_lower_level_bottom_level)
+                        let mut iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
+                        self.generate_new_sstables(&mut iter, task.compact_to_bottom_level())
                     }
                     Some(_) => {
                         let upper_iter = SstConcatIterator::create_and_seek_to_first(upper_tables)?;
-                        let iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
-                        self.generate_new_sstables(iter, *is_lower_level_bottom_level)
+                        let mut iter = TwoMergeIterator::create(upper_iter, lower_iter)?;
+                        self.generate_new_sstables(&mut iter, task.compact_to_bottom_level())
                     }
                 }
             }
@@ -286,10 +282,10 @@ impl LsmStorageInner {
                     &snapshot,
                     l1_sstables,
                 ))?;
-                let iter = TwoMergeIterator::create(l0_iter, l1_iter)?;
+                let mut iter = TwoMergeIterator::create(l0_iter, l1_iter)?;
 
                 // Create new SSTables
-                Ok(self.generate_new_sstables(iter, false)?)
+                Ok(self.generate_new_sstables(&mut iter, task.compact_to_bottom_level())?)
             }
         }
     }
@@ -299,8 +295,8 @@ impl LsmStorageInner {
         B: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>,
     >(
         &self,
-        mut iter: TwoMergeIterator<A, B>,
-        is_lower_level_bottom_level: bool,
+        iter: &mut TwoMergeIterator<A, B>,
+        _is_lower_level_bottom_level: bool,
     ) -> Result<Vec<Arc<SsTable>>> {
         let build_new_sst = |sst_builder: SsTableBuilder| {
             let sst_id = self.next_sst_id();
@@ -313,19 +309,21 @@ impl LsmStorageInner {
 
         let mut sstables = Vec::new();
         let mut sst_builder = SsTableBuilder::new(self.options.block_size);
+        let mut prev_key = Vec::<u8>::new();
         while iter.is_valid() {
-            if is_lower_level_bottom_level {
-                // Skip deleted key
-                if !iter.value().is_empty() {
-                    sst_builder.add(iter.key(), iter.value());
+            let this_key = iter.key();
+            if prev_key != this_key.key_ref() {
+                if sst_builder.estimated_size() >= self.options.target_sst_size {
+                    sstables.push(Arc::new(build_new_sst(sst_builder)?));
+                    sst_builder = SsTableBuilder::new(self.options.block_size);
                 }
-            } else {
-                sst_builder.add(iter.key(), iter.value());
+
+                prev_key.clear();
+                prev_key.extend_from_slice(this_key.key_ref());
             }
-            if sst_builder.estimated_size() >= self.options.target_sst_size {
-                sstables.push(Arc::new(build_new_sst(sst_builder)?));
-                sst_builder = SsTableBuilder::new(self.options.block_size);
-            }
+
+            sst_builder.add(this_key, iter.value());
+
             iter.next()?;
         }
         if sst_builder.num_of_entries() > 0 {

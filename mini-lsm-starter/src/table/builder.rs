@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use bytes::BufMut;
 
 use crate::key::KeyVec;
@@ -106,7 +106,8 @@ impl SsTableBuilder {
         // Extra
         buf.put_u32(meta_section_offset as u32);
 
-        let file = FileObject::create(path.as_ref(), buf)?;
+        let file = FileObject::create(path.as_ref(), buf)
+            .with_context(|| anyhow!("Failed to create FileObject: {:?}", path.as_ref()))?;
         let sstable = SsTable {
             file,
             block_meta_offset: meta_section_offset,
