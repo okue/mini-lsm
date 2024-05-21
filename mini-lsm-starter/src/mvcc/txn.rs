@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 
 use crate::lsm_storage::WriteBatchRecord;
 use crate::mem_table::map_bound;
+use crate::mvcc::CommittedTxnData;
 use crate::{
     iterators::{two_merge_iterator::TwoMergeIterator, StorageIterator},
     lsm_iterator::{FusedIterator, LsmIterator},
@@ -24,8 +25,8 @@ pub struct Transaction {
     pub(crate) inner: Arc<LsmStorageInner>,
     pub(crate) local_storage: Arc<SkipMap<Bytes, Bytes>>,
     pub(crate) committed: Arc<AtomicBool>,
-    /// Write set and read set
-    #[allow(dead_code)]
+    /// 0: read set
+    /// 1: write set
     pub(crate) key_hashes: Option<Mutex<(HashSet<u32>, HashSet<u32>)>>,
 }
 
@@ -33,6 +34,11 @@ impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
         if self.committed.load(Ordering::Relaxed) {
             bail!("already committed!")
+        }
+
+        if let Some(key_hashes) = self.key_hashes.as_ref() {
+            let mut guard = key_hashes.lock();
+            guard.0.insert(farmhash::fingerprint32(key));
         }
 
         if let Some(entry) = self.local_storage.get(key) {
@@ -46,6 +52,7 @@ impl Transaction {
         self.inner.get_with_ts(key, self.read_ts)
     }
 
+    // Note: `scan` doesn't guarantee serializable.
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
         if self.committed.load(Ordering::Relaxed) {
             bail!("already committed!")
@@ -70,20 +77,40 @@ impl Transaction {
             panic!("already committed!")
         }
 
+        if let Some(key_hashes) = self.key_hashes.as_ref() {
+            let mut guard = key_hashes.lock();
+            guard.1.insert(farmhash::fingerprint32(key));
+        }
+
         self.local_storage
             .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
     }
 
     pub fn delete(&self, key: &[u8]) {
-        if self.committed.load(Ordering::Relaxed) {
-            panic!("already committed!")
-        }
-
         self.put(key, &[]);
     }
 
     pub fn commit(&self) -> Result<()> {
-        let _lock = self.inner.mvcc().commit_lock.lock();
+        let _commit_lock = self.inner.mvcc().commit_lock.lock();
+
+        let serializable = self.key_hashes.is_some();
+        let mut written_in_this_txn: bool = false;
+
+        if serializable {
+            let key_hashes = self.key_hashes.as_ref().unwrap().lock();
+            let (read_set, write_set) = &*key_hashes;
+            written_in_this_txn = !write_set.is_empty();
+
+            if written_in_this_txn {
+                let committed_txns = self.inner.mvcc().committed_txns.lock();
+                for (_, commit_tx) in committed_txns.range((self.read_ts + 1)..) {
+                    if !commit_tx.key_hashes.is_disjoint(read_set) {
+                        bail!("Commit abort for serializable violation!")
+                    }
+                }
+            }
+        }
+
         let write_batch = self
             .local_storage
             .iter()
@@ -95,8 +122,31 @@ impl Transaction {
                 }
             })
             .collect::<Vec<_>>();
-        self.inner.write_batch(&write_batch)?;
+        let commit_ts = self.inner.write_batch_inner(&write_batch)?;
 
+        if serializable && written_in_this_txn {
+            let mut key_hashes = self.key_hashes.as_ref().unwrap().lock();
+            let (_, write_set) = &mut *key_hashes;
+
+            let mut committed_txns = self.inner.mvcc().committed_txns.lock();
+            committed_txns.insert(
+                commit_ts,
+                CommittedTxnData {
+                    key_hashes: std::mem::take(write_set),
+                    read_ts: self.read_ts,
+                    commit_ts,
+                },
+            );
+
+            let watermark = self.inner.mvcc().watermark();
+            while let Some(entry) = committed_txns.first_entry() {
+                if entry.key() < &watermark {
+                    entry.remove();
+                } else {
+                    break;
+                }
+            }
+        }
         self.committed.store(true, Ordering::Relaxed);
         Ok(())
     }
@@ -173,7 +223,7 @@ impl StorageIterator for TxnLocalIterator {
 }
 
 pub struct TxnIterator {
-    _txn: Arc<Transaction>,
+    txn: Arc<Transaction>,
     iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
 }
 
@@ -182,8 +232,18 @@ impl TxnIterator {
         txn: Arc<Transaction>,
         iter: TwoMergeIterator<TxnLocalIterator, FusedIterator<LsmIterator>>,
     ) -> Result<Self> {
-        let iter = Self { _txn: txn, iter };
+        let iter = Self { txn, iter };
+        iter.add_to_read_set();
         Ok(iter)
+    }
+
+    fn add_to_read_set(&self) {
+        if self.is_valid() {
+            if let Some(key_hashes) = self.txn.key_hashes.as_ref() {
+                let mut guard = key_hashes.lock();
+                guard.0.insert(farmhash::fingerprint32(self.key()));
+            }
+        }
     }
 }
 
@@ -210,6 +270,7 @@ impl StorageIterator for TxnIterator {
                 return Ok(());
             }
             if !self.value().is_empty() {
+                self.add_to_read_set();
                 return Ok(());
             }
         }

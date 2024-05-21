@@ -411,7 +411,12 @@ impl LsmStorageInner {
     }
 
     /// Get a key from the storage.
-    pub fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
+    pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
+        let txn = self.mvcc().new_txn(self.clone(), false);
+        txn.get(key)
+    }
+
+    pub(super) fn get_with_ts(&self, key: &[u8], read_ts: u64) -> Result<Option<Bytes>> {
         let iter = LsmIterator::new(
             self.get_inner(key)?,
             map_key_bound_plus_ts(Bound::Included(key), TS_RANGE_END),
@@ -424,37 +429,58 @@ impl LsmStorageInner {
         Ok(None)
     }
 
-    pub fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
-        let txn = self.mvcc().new_txn(self.clone(), false);
-        txn.get(key)
+    /// Write a batch of data into the storage.
+    pub fn write_batch<T: AsRef<[u8]>>(
+        self: &Arc<Self>,
+        batch: &[WriteBatchRecord<T>],
+    ) -> Result<()> {
+        if self.options.serializable {
+            let txn = self.mvcc().new_txn(self.clone(), self.options.serializable);
+            for batch_record in batch {
+                match batch_record {
+                    WriteBatchRecord::Put(key, value) => txn.put(key.as_ref(), value.as_ref()),
+                    WriteBatchRecord::Del(key) => txn.delete(key.as_ref()),
+                }
+            }
+            txn.commit()?;
+        } else {
+            self.write_batch_inner(batch)?;
+        }
+        Ok(())
     }
 
-    /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
+    /// Write to storage.
+    /// Returns commit timestamp.
+    pub(super) fn write_batch_inner<T: AsRef<[u8]>>(
+        &self,
+        batch: &[WriteBatchRecord<T>],
+    ) -> Result<u64> {
+        let commit_ts = self.mvcc().latest_commit_ts() + 1;
         let memtable_size: usize;
         {
             // Only one thread can write to the storage engine at the same time.
-            let _write_lock = self.mvcc().write_lock.lock();
-            let ts = self.mvcc().latest_commit_ts() + 1;
+            let write_lock = self.mvcc().write_lock.lock();
             let guard = self.state.read();
 
             for batch_record in batch {
                 match batch_record {
                     WriteBatchRecord::Put(key, value) => {
-                        guard
-                            .memtable
-                            .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())?;
+                        guard.memtable.put(
+                            KeySlice::from_slice(key.as_ref(), commit_ts),
+                            value.as_ref(),
+                        )?;
                     }
                     WriteBatchRecord::Del(key) => {
                         guard
                             .memtable
-                            .put(KeySlice::from_slice(key.as_ref(), ts), &[])?;
+                            .put(KeySlice::from_slice(key.as_ref(), commit_ts), &[])?;
                     }
                 }
             }
 
             memtable_size = guard.memtable.approximate_size();
-            self.mvcc().update_commit_ts(ts);
+            self.mvcc().update_commit_ts(commit_ts);
+            drop(write_lock);
         }
 
         // Freeze memtable to immutable if the size > target_sst_size.
@@ -465,16 +491,16 @@ impl LsmStorageInner {
                 self.force_freeze_memtable(&lock)?;
             }
         }
-        Ok(())
+        Ok(commit_ts)
     }
 
     /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
         self.write_batch(&[WriteBatchRecord::Put(key, value)])
     }
 
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, key: &[u8]) -> Result<()> {
+    pub fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
         self.write_batch(&[WriteBatchRecord::Del(key)])
     }
 
@@ -584,7 +610,7 @@ impl LsmStorageInner {
     }
 
     pub fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
-        Ok(self.mvcc().new_txn(self.clone(), false))
+        Ok(self.mvcc().new_txn(self.clone(), self.options.serializable))
     }
 
     /// Create an iterator over a range of keys.
@@ -593,7 +619,7 @@ impl LsmStorageInner {
         txn.scan(lower, upper)
     }
 
-    pub fn scan_with_ts(
+    pub(super) fn scan_with_ts(
         &self,
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
@@ -609,11 +635,7 @@ impl LsmStorageInner {
         ))
     }
 
-    pub(crate) fn scan_inner(
-        &self,
-        lower: Bound<&[u8]>,
-        upper: Bound<&[u8]>,
-    ) -> Result<LsmIteratorInner> {
+    fn scan_inner(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<LsmIteratorInner> {
         let state = {
             let guard = self.state.read();
             guard.clone()
@@ -627,7 +649,7 @@ impl LsmStorageInner {
         )
     }
 
-    pub(crate) fn get_inner(&self, key: &[u8]) -> Result<LsmIteratorInner> {
+    fn get_inner(&self, key: &[u8]) -> Result<LsmIteratorInner> {
         let state = {
             let guard = self.state.read();
             guard.clone()

@@ -14,10 +14,12 @@ use crate::lsm_storage::LsmStorageInner;
 
 use self::{txn::Transaction, watermark::Watermark};
 
-#[allow(dead_code)]
 pub(crate) struct CommittedTxnData {
+    // write set
     pub(crate) key_hashes: HashSet<u32>,
+    #[allow(unused)]
     pub(crate) read_ts: u64,
+    #[allow(unused)]
     pub(crate) commit_ts: u64,
 }
 
@@ -25,7 +27,6 @@ pub(crate) struct LsmMvccInner {
     pub(crate) write_lock: Mutex<()>,
     pub(crate) commit_lock: Mutex<()>,
     pub(crate) ts: Arc<Mutex<(u64, Watermark)>>,
-    #[allow(dead_code)]
     pub(crate) committed_txns: Arc<Mutex<BTreeMap<u64, CommittedTxnData>>>,
 }
 
@@ -53,7 +54,7 @@ impl LsmMvccInner {
         ts.1.watermark().unwrap_or(ts.0)
     }
 
-    pub fn new_txn(&self, inner: Arc<LsmStorageInner>, _serializable: bool) -> Arc<Transaction> {
+    pub fn new_txn(&self, inner: Arc<LsmStorageInner>, serializable: bool) -> Arc<Transaction> {
         let read_ts = self.latest_commit_ts();
         self.ts.lock().1.add_reader(read_ts);
         Arc::new(Transaction {
@@ -61,7 +62,11 @@ impl LsmMvccInner {
             inner,
             local_storage: Arc::new(SkipMap::new()),
             committed: Arc::new(AtomicBool::new(false)),
-            key_hashes: Some(Mutex::new((HashSet::new(), HashSet::new()))),
+            key_hashes: if serializable {
+                Some(Mutex::new((HashSet::new(), HashSet::new())))
+            } else {
+                None
+            },
         })
     }
 }
