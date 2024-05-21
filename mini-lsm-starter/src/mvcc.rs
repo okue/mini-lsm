@@ -1,5 +1,5 @@
 pub mod txn;
-mod watermark;
+pub mod watermark;
 
 use crossbeam_skiplist::SkipMap;
 use std::sync::atomic::AtomicBool;
@@ -52,8 +52,10 @@ impl LsmMvccInner {
     }
 
     pub fn new_txn(&self, inner: Arc<LsmStorageInner>, _serializable: bool) -> Arc<Transaction> {
+        let read_ts = self.latest_commit_ts();
+        self.ts.lock().1.add_reader(read_ts);
         Arc::new(Transaction {
-            read_ts: self.latest_commit_ts(),
+            read_ts,
             inner,
             local_storage: Arc::new(SkipMap::new()),
             committed: Arc::new(AtomicBool::new(false)),

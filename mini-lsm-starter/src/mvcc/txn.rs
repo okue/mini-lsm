@@ -48,11 +48,11 @@ impl Transaction {
         )
     }
 
-    pub fn put(&self, key: &[u8], value: &[u8]) {
+    pub fn put(&self, _key: &[u8], _value: &[u8]) {
         unimplemented!()
     }
 
-    pub fn delete(&self, key: &[u8]) {
+    pub fn delete(&self, _key: &[u8]) {
         unimplemented!()
     }
 
@@ -62,7 +62,9 @@ impl Transaction {
 }
 
 impl Drop for Transaction {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        self.inner.mvcc().ts.lock().1.remove_reader(self.read_ts);
+    }
 }
 
 type SkipMapRangeIter<'a> =

@@ -430,18 +430,29 @@ impl LsmStorageInner {
     }
 
     /// Write a batch of data into the storage. Implement in week 2 day 7.
-    pub fn write_batch<T: AsRef<[u8]>>(&self, _batch: &[WriteBatchRecord<T>]) -> Result<()> {
-        unimplemented!()
-    }
-
-    /// Put a key-value pair into the storage by writing into the current memtable.
-    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub fn write_batch<T: AsRef<[u8]>>(&self, batch: &[WriteBatchRecord<T>]) -> Result<()> {
         let memtable_size: usize;
         {
+            // Only one thread can write to the storage engine at the same time.
             let _write_lock = self.mvcc().write_lock.lock();
             let ts = self.mvcc().latest_commit_ts() + 1;
             let guard = self.state.read();
-            guard.memtable.put(KeySlice::from_slice(key, ts), value)?;
+
+            for batch_record in batch {
+                match batch_record {
+                    WriteBatchRecord::Put(key, value) => {
+                        guard
+                            .memtable
+                            .put(KeySlice::from_slice(key.as_ref(), ts), value.as_ref())?;
+                    }
+                    WriteBatchRecord::Del(key) => {
+                        guard
+                            .memtable
+                            .put(KeySlice::from_slice(key.as_ref(), ts), &[])?;
+                    }
+                }
+            }
+
             memtable_size = guard.memtable.approximate_size();
             self.mvcc().update_commit_ts(ts);
         }
@@ -457,9 +468,14 @@ impl LsmStorageInner {
         Ok(())
     }
 
+    /// Put a key-value pair into the storage by writing into the current memtable.
+    pub fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        self.write_batch(&[WriteBatchRecord::Put(key, value)])
+    }
+
     /// Remove a key from the storage by writing an empty value.
-    pub fn delete(&self, _key: &[u8]) -> Result<()> {
-        self.put(_key, &[])
+    pub fn delete(&self, key: &[u8]) -> Result<()> {
+        self.write_batch(&[WriteBatchRecord::Del(key)])
     }
 
     pub(crate) fn path_of_sst_static(path: impl AsRef<Path>, id: usize) -> PathBuf {

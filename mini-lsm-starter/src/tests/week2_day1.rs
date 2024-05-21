@@ -207,6 +207,7 @@ fn test_task3_integration() {
     sync(&storage);
 
     storage.force_full_compaction().unwrap();
+    storage.dump_structure();
     assert!(storage.state.read().l0_sstables.is_empty());
     assert!(!storage.state.read().levels[0].1.is_empty());
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::iterators::concat_iterator::SstConcatIterator;
@@ -15,7 +16,7 @@ pub use tiered::{TieredCompactionController, TieredCompactionOptions, TieredComp
 use crate::iterators::merge_iterator::MergeIterator;
 use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, KeyVec};
 use crate::lsm_storage::{LsmStorageInner, LsmStorageState};
 use crate::manifest::ManifestRecord;
 use crate::table::{SsTable, SsTableBuilder, SsTableIterator};
@@ -296,8 +297,10 @@ impl LsmStorageInner {
     >(
         &self,
         iter: &mut TwoMergeIterator<A, B>,
-        _is_lower_level_bottom_level: bool,
+        is_lower_level_bottom_level: bool,
     ) -> Result<Vec<Arc<SsTable>>> {
+        let watermark = self.mvcc().watermark();
+        dbg!(watermark);
         let build_new_sst = |sst_builder: SsTableBuilder| {
             let sst_id = self.next_sst_id();
             sst_builder.build(
@@ -306,27 +309,96 @@ impl LsmStorageInner {
                 self.path_of_sst(sst_id),
             )
         };
+        let append_key_value = |same_key_vals: &Vec<(KeyVec, Vec<u8>)>,
+                                sst_builder: &mut SsTableBuilder| {
+            println!(
+                "try to compact key={:?}, length={}",
+                same_key_vals.first().unwrap().0,
+                same_key_vals.len()
+            );
+            if same_key_vals.is_empty() {
+                return;
+            }
+            if same_key_vals.len() == 1 {
+                if let Some((key, value)) = same_key_vals.first() {
+                    if !(is_lower_level_bottom_level && value.is_empty()) {
+                        sst_builder.add(key.as_key_slice(), value.as_slice());
+                    }
+                }
+                return;
+            }
+            let (newer, older): (Vec<_>, Vec<_>) = same_key_vals
+                .iter()
+                .partition(|item| item.0.ts() >= watermark);
+            if newer.len() == 1 {
+                if let Some((key, value)) = newer.first() {
+                    if !(is_lower_level_bottom_level && value.is_empty()) {
+                        sst_builder.add(key.as_key_slice(), value.as_slice());
+                    }
+                }
+            } else {
+                for (key, value) in &newer {
+                    sst_builder.add(key.as_key_slice(), value.as_slice());
+                }
+            }
+            if newer.is_empty() {
+                if let Some((key, value)) = older.first() {
+                    if !(is_lower_level_bottom_level && value.is_empty()) {
+                        sst_builder.add(key.as_key_slice(), value.as_slice());
+                    }
+                }
+            }
+        };
 
         let mut sstables = Vec::new();
         let mut sst_builder = SsTableBuilder::new(self.options.block_size);
         let mut prev_key = Vec::<u8>::new();
+        let mut same_key_vals = Vec::<(KeyVec, Vec<u8>)>::new();
+
+        let mut c = 0;
         while iter.is_valid() {
             let this_key = iter.key();
-            if prev_key != this_key.key_ref() {
+            let prev_key_as_bytes = Bytes::copy_from_slice(prev_key.as_slice());
+            if c % 50 == 0 {
+                println!("this key {:?} / prev key {:?}", this_key, prev_key_as_bytes);
+            }
+            c += 1;
+
+            if this_key.key_ref() != prev_key {
+                if !same_key_vals.is_empty() {
+                    // Do compaction after all snapshot data for the prev_key is traversed.
+                    append_key_value(&same_key_vals, &mut sst_builder);
+                    same_key_vals.clear();
+                }
+
+                // To make sure the same keys should exist in the same sstable,
+                // build sstable when prev_key != this_key.
+                println!(
+                    "SST builder size={} on {:?} -> {:?}",
+                    sst_builder.estimated_size(),
+                    prev_key_as_bytes,
+                    this_key
+                );
                 if sst_builder.estimated_size() >= self.options.target_sst_size {
+                    println!("Build SST on {:?}", prev_key_as_bytes);
                     sstables.push(Arc::new(build_new_sst(sst_builder)?));
                     sst_builder = SsTableBuilder::new(self.options.block_size);
                 }
-
-                prev_key.clear();
-                prev_key.extend_from_slice(this_key.key_ref());
             }
 
-            sst_builder.add(this_key, iter.value());
+            same_key_vals.push((this_key.to_key_vec(), iter.value().to_vec()));
 
+            prev_key.clear();
+            prev_key.extend_from_slice(this_key.key_ref());
             iter.next()?;
         }
+
+        append_key_value(&same_key_vals, &mut sst_builder);
         if sst_builder.num_of_entries() > 0 {
+            println!(
+                "Build SST on {:?}",
+                Bytes::copy_from_slice(prev_key.as_slice())
+            );
             sstables.push(Arc::new(build_new_sst(sst_builder)?));
         }
         Ok(sstables)
