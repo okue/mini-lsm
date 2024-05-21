@@ -14,6 +14,7 @@ use crate::lsm_storage::LsmStorageInner;
 
 use self::{txn::Transaction, watermark::Watermark};
 
+#[allow(dead_code)]
 pub(crate) struct CommittedTxnData {
     pub(crate) key_hashes: HashSet<u32>,
     pub(crate) read_ts: u64,
@@ -24,6 +25,7 @@ pub(crate) struct LsmMvccInner {
     pub(crate) write_lock: Mutex<()>,
     pub(crate) commit_lock: Mutex<()>,
     pub(crate) ts: Arc<Mutex<(u64, Watermark)>>,
+    #[allow(dead_code)]
     pub(crate) committed_txns: Arc<Mutex<BTreeMap<u64, CommittedTxnData>>>,
 }
 

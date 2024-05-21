@@ -1,15 +1,17 @@
+use std::sync::atomic::Ordering;
 use std::{
     collections::HashSet,
     ops::Bound,
     sync::{atomic::AtomicBool, Arc},
 };
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bytes::Bytes;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 use parking_lot::Mutex;
 
+use crate::lsm_storage::WriteBatchRecord;
 use crate::mem_table::map_bound;
 use crate::{
     iterators::{two_merge_iterator::TwoMergeIterator, StorageIterator},
@@ -23,41 +25,80 @@ pub struct Transaction {
     pub(crate) local_storage: Arc<SkipMap<Bytes, Bytes>>,
     pub(crate) committed: Arc<AtomicBool>,
     /// Write set and read set
+    #[allow(dead_code)]
     pub(crate) key_hashes: Option<Mutex<(HashSet<u32>, HashSet<u32>)>>,
 }
 
 impl Transaction {
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        if self.committed.load(Ordering::Relaxed) {
+            bail!("already committed!")
+        }
+
         if let Some(entry) = self.local_storage.get(key) {
-            return Ok(Some(entry.value().clone()));
+            let value = entry.value();
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(value.clone()))
+            };
         }
         self.inner.get_with_ts(key, self.read_ts)
     }
 
     pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<TxnIterator> {
+        if self.committed.load(Ordering::Relaxed) {
+            bail!("already committed!")
+        }
+
+        let local_storage_iter = TxnLocalIterator::create(
+            self.local_storage.clone(),
+            map_bound(lower),
+            map_bound(upper),
+        )?;
         TxnIterator::create(
             self.clone(),
             TwoMergeIterator::create(
-                TxnLocalIterator::create(
-                    self.local_storage.clone(),
-                    map_bound(lower),
-                    map_bound(upper),
-                )?,
+                local_storage_iter,
                 self.inner.scan_with_ts(lower, upper, self.read_ts)?,
             )?,
         )
     }
 
-    pub fn put(&self, _key: &[u8], _value: &[u8]) {
-        unimplemented!()
+    pub fn put(&self, key: &[u8], value: &[u8]) {
+        if self.committed.load(Ordering::Relaxed) {
+            panic!("already committed!")
+        }
+
+        self.local_storage
+            .insert(Bytes::copy_from_slice(key), Bytes::copy_from_slice(value));
     }
 
-    pub fn delete(&self, _key: &[u8]) {
-        unimplemented!()
+    pub fn delete(&self, key: &[u8]) {
+        if self.committed.load(Ordering::Relaxed) {
+            panic!("already committed!")
+        }
+
+        self.put(key, &[]);
     }
 
     pub fn commit(&self) -> Result<()> {
-        unimplemented!()
+        let _lock = self.inner.mvcc().commit_lock.lock();
+        let write_batch = self
+            .local_storage
+            .iter()
+            .map(|entry| {
+                if entry.value().is_empty() {
+                    WriteBatchRecord::Del(entry.key().clone())
+                } else {
+                    WriteBatchRecord::Put(entry.key().clone(), entry.value().clone())
+                }
+            })
+            .collect::<Vec<_>>();
+        self.inner.write_batch(&write_batch)?;
+
+        self.committed.store(true, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -108,6 +149,7 @@ impl StorageIterator for TxnLocalIterator {
         self.borrow_item().0.as_ref()
     }
 
+    // may return empty.
     fn value(&self) -> &[u8] {
         if !self.is_valid() {
             panic!("invalid iterator")
@@ -148,12 +190,13 @@ impl TxnIterator {
 impl StorageIterator for TxnIterator {
     type KeyType<'a> = &'a [u8] where Self: 'a;
 
-    fn value(&self) -> &[u8] {
-        self.iter.value()
-    }
-
     fn key(&self) -> Self::KeyType<'_> {
         self.iter.key()
+    }
+
+    // must not return empty
+    fn value(&self) -> &[u8] {
+        self.iter.value()
     }
 
     fn is_valid(&self) -> bool {
@@ -161,11 +204,15 @@ impl StorageIterator for TxnIterator {
     }
 
     fn next(&mut self) -> Result<()> {
-        if !self.is_valid() {
-            return Ok(());
+        loop {
+            self.iter.next()?;
+            if !self.iter.is_valid() {
+                return Ok(());
+            }
+            if !self.value().is_empty() {
+                return Ok(());
+            }
         }
-
-        self.iter.next()
     }
 
     fn num_active_iterators(&self) -> usize {
